@@ -154,13 +154,13 @@ function renderHero(strategy) {
   $('#stat-ddath').className = `stat-value ${strategy.drawdownATH < -0.05 ? 'negative' : 'positive'}`;
   
   $('#stat-mad').textContent = fmt.pct(strategy.madMA200);
-  $('#stat-mad').className = `stat-value ${strategy.madMA200 < 0 ? 'negative' : 'positive'}`;
+  $('#stat-mad').className = `stat-value ${(strategy.madMA200 ?? 0) < 0 ? 'negative' : 'positive'}`;
   
-  $('#stat-zscore').textContent = strategy.zScore !== null ? strategy.zScore.toFixed(2) : '—';
+  $('#stat-zscore').textContent = (strategy.zScore !== null && strategy.zScore !== undefined) ? strategy.zScore.toFixed(2) : '—';
 
-  $('#stat-regime').innerHTML = `<span class="regime-pill ${strategy.regime}">${strategy.regime}</span>`;
+  $('#stat-regime').innerHTML = `<span class="regime-pill ${strategy.regime || 'normal'}">${strategy.regime || '—'}</span>`;
 
-  $('#stat-vol').textContent = strategy.volRolling !== null ? fmt.pct(strategy.volRolling, 1) : '—';
+  $('#stat-vol').textContent = (strategy.volRolling !== null && strategy.volRolling !== undefined) ? fmt.pct(strategy.volRolling, 1) : '—';
 
   $('#stat-confidence').textContent = strategy.confidence?.toUpperCase() || 'LOW';
   $('#stat-boosts').textContent = `${strategy.monthsUsed}/${config.pac.capBoostMonthsPerYear}`;
