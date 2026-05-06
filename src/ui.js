@@ -1,7 +1,5 @@
 // =============================================================================
-// UI — Render orchestrator
-// =============================================================================
-// Tutta la logica di rendering DOM. Listener degli input.
+// UI — FINAL (defensive null checks + legacy badge + clean settings)
 // =============================================================================
 
 import { config } from './config.js';
@@ -12,24 +10,23 @@ import {
 } from './portfolioEngine.js';
 import {
   getStrategyOfTheMonth,
-  getBoostStats,
   recordBoostUsedThisMonth,
 } from './strategyEngine.js';
 import {
   getAllPrices,
   getHistoricalPrices,
   setManualPrice,
-  setApiKey,
-  getApiKey,
   getCacheAgeHours,
   clearAllCache,
+  hasFreshManualPrices,
+  getManualPrices,
+  getManualPriceAge,
+  clearManualPrices,
 } from './priceProvider.js';
 import { runMonteCarlo, generateTrendPaths, clearMCCache } from './monteCarloEngine.js';
-import { simulateSale, estimateLatentTax } from './taxEngine.js';
+import { simulateSale } from './taxEngine.js';
 import { computeFlip, stressTest } from './realEstateEngine.js';
-import {
-  renderTrendChart, renderMCDistributionChart, destroyAllCharts,
-} from './charts.js';
+import { renderTrendChart, renderMCDistributionChart, destroyAllCharts } from './charts.js';
 
 // -------------------------------------------------------------------------
 // FORMATTING
@@ -63,6 +60,7 @@ const fmt = {
   },
 };
 
+const isNum = (v) => typeof v === 'number' && !isNaN(v);
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
@@ -76,36 +74,34 @@ const state = {
   strategy: null,
   mcResults: null,
   trendData: null,
-  loading: { prices: false, mc: false, history: false },
 };
 
 // -------------------------------------------------------------------------
-// HEADER STATUS
+// HEADER STATUS — verde se c'è almeno una fonte fresca (manual o cache)
 // -------------------------------------------------------------------------
 function renderHeaderStatus() {
-  const apiKey = getApiKey();
-  const cacheAge = getCacheAgeHours();
-
   const apiStatus = $('#api-status');
+  if (!apiStatus) return;
   const dot = apiStatus.querySelector('.status-dot');
   const text = apiStatus.querySelector('.status-text');
 
-  if (!apiKey) {
-    dot.className = 'status-dot warning';
-    text.textContent = 'API non configurata';
-  } else if (cacheAge !== null && parseFloat(cacheAge) < 24) {
+  const hasManual = hasFreshManualPrices();
+  const cacheAge = getCacheAgeHours();
+  const hasCache = cacheAge !== null && parseFloat(cacheAge) < 24;
+
+  if (hasManual) {
+    dot.className = 'status-dot';
+    text.textContent = 'Prezzi manuali · attivi';
+  } else if (hasCache) {
     dot.className = 'status-dot';
     text.textContent = `Aggiornato ${cacheAge}h fa`;
   } else {
     dot.className = 'status-dot warning';
-    text.textContent = 'Dati prezzi obsoleti';
+    text.textContent = 'Prezzi fallback (statici)';
   }
 
-  // Date status
   const dateEl = $('#date-status');
-  if (dateEl) {
-    dateEl.textContent = fmt.date(new Date());
-  }
+  if (dateEl) dateEl.textContent = fmt.date(new Date());
 }
 
 // -------------------------------------------------------------------------
@@ -113,14 +109,15 @@ function renderHeaderStatus() {
 // -------------------------------------------------------------------------
 function renderHero(strategy) {
   const card = $('#hero-card');
-  if (!strategy) return;
+  if (!card || !strategy) return;
 
   card.className = `hero-card tier-${strategy.tier}`;
 
-  $('#hero-eyebrow-tier').textContent = strategy.tierLabel;
+  $('#hero-eyebrow-tier').textContent = strategy.tierLabel || '—';
+  const eyebrowBadge = $('#hero-eyebrow-tier');
+  if (eyebrowBadge) eyebrowBadge.className = `tier-badge tier-${strategy.tier}`;
   $('#hero-eyebrow-date').textContent = fmt.date(new Date()).toUpperCase();
 
-  // Headline drammatica
   let headline;
   if (strategy.tier === 0) {
     headline = `Mercato a regime <em>normale</em>. Mantieni la disciplina.`;
@@ -136,64 +133,63 @@ function renderHero(strategy) {
     headline = `Drawdown <em>estremo</em>. Massima opportunità.`;
   }
   $('#hero-headline').innerHTML = headline;
+  $('#hero-rationale').textContent = strategy.rationale || '';
 
-  $('#hero-rationale').textContent = strategy.rationale;
-
-  // Amounts
   $('#amount-base').textContent = fmt.eur(strategy.baseAmount);
   $('#amount-extra').textContent = fmt.eur(strategy.extraAmount);
   $('#amount-extra').className = `amount-value ${strategy.extraAmount > 0 ? 'positive' : ''}`;
   $('#amount-total').textContent = fmt.eur(strategy.totalAmount);
   $('#amount-total').className = `amount-value ${strategy.tier > 0 && !strategy.capReached ? 'positive' : ''}`;
 
-  // Stats
-  $('#stat-dd12m').textContent = fmt.pct(strategy.drawdown);
-  $('#stat-dd12m').className = `stat-value ${strategy.drawdown < -0.05 ? 'negative' : 'positive'}`;
-  
-  $('#stat-ddath').textContent = fmt.pct(strategy.drawdownATH);
-  $('#stat-ddath').className = `stat-value ${strategy.drawdownATH < -0.05 ? 'negative' : 'positive'}`;
-  
-  $('#stat-mad').textContent = fmt.pct(strategy.madMA200);
-  $('#stat-mad').className = `stat-value ${(strategy.madMA200 ?? 0) < 0 ? 'negative' : 'positive'}`;
-  
-  $('#stat-zscore').textContent = (strategy.zScore !== null && strategy.zScore !== undefined) ? strategy.zScore.toFixed(2) : '—';
+  // Stats — TUTTI con isNum check defensivo
+  $('#stat-dd12m').textContent = isNum(strategy.drawdown) ? fmt.pct(strategy.drawdown) : '—';
+  $('#stat-dd12m').className = `stat-value ${isNum(strategy.drawdown) && strategy.drawdown < -0.05 ? 'negative' : 'positive'}`;
 
-  $('#stat-regime').innerHTML = `<span class="regime-pill ${strategy.regime || 'normal'}">${strategy.regime || '—'}</span>`;
+  $('#stat-ddath').textContent = isNum(strategy.drawdownATH) ? fmt.pct(strategy.drawdownATH) : '—';
+  $('#stat-ddath').className = `stat-value ${isNum(strategy.drawdownATH) && strategy.drawdownATH < -0.05 ? 'negative' : 'positive'}`;
 
-  $('#stat-vol').textContent = (strategy.volRolling !== null && strategy.volRolling !== undefined) ? fmt.pct(strategy.volRolling, 1) : '—';
+  $('#stat-mad').textContent = isNum(strategy.madMA200) ? fmt.pct(strategy.madMA200) : '—';
+  $('#stat-mad').className = `stat-value ${isNum(strategy.madMA200) && strategy.madMA200 < 0 ? 'negative' : 'positive'}`;
 
-  $('#stat-confidence').textContent = strategy.confidence?.toUpperCase() || 'LOW';
+  $('#stat-zscore').textContent = isNum(strategy.zScore) ? strategy.zScore.toFixed(2) : '—';
+
+  const regime = strategy.regime || 'normal';
+  $('#stat-regime').innerHTML = `<span class="regime-pill ${regime}">${regime}</span>`;
+
+  $('#stat-vol').textContent = isNum(strategy.volRolling) ? fmt.pct(strategy.volRolling, 1) : '—';
+
+  $('#stat-confidence').textContent = (strategy.confidence || 'low').toUpperCase();
   $('#stat-boosts').textContent = `${strategy.monthsUsed ?? 0}/${config.pac.capBoostMonthsPerYear}`;
 
-  // Action items
+  // Action items (defensive)
   const ul = $('#action-list');
-  ul.innerHTML = '';
-  (strategy.actionItems || []).forEach(item => {
-    const li = document.createElement('li');
-    li.textContent = item;
-    ul.appendChild(li);
-  });
-
-  // Warnings
-  const wDiv = $('#warnings-list');
-  wDiv.innerHTML = '';
-  const warnsArr = Array.isArray(strategy.warnings) ? strategy.warnings : [];
-  if (warnsArr.length === 0) {
-    wDiv.innerHTML = '<div class="warning-item">— Nessun warning attivo</div>';
-  } else {
-    warnsArr.forEach(w => {
-      const d = document.createElement('div');
-      d.className = 'warning-item';
-      d.textContent = w;
-      wDiv.appendChild(d);
+  if (ul) {
+    ul.innerHTML = '';
+    (strategy.actionItems || []).forEach(item => {
+      const li = document.createElement('li');
+      li.textContent = item;
+      ul.appendChild(li);
     });
   }
 
-  // Allocation note
-  $('#allocation-note').textContent = strategy.allocationNote || '';
+  // Warnings (defensive)
+  const wDiv = $('#warnings-list');
+  if (wDiv) {
+    wDiv.innerHTML = '';
+    const warnsArr = Array.isArray(strategy.warnings) ? strategy.warnings : [];
+    if (warnsArr.length === 0) {
+      wDiv.innerHTML = '<div class="warning-item">— Nessun warning attivo</div>';
+    } else {
+      warnsArr.forEach(w => {
+        const d = document.createElement('div');
+        d.className = 'warning-item';
+        d.textContent = w;
+        wDiv.appendChild(d);
+      });
+    }
+  }
 
-  // Allocation note
-  $('#allocation-note').textContent = strategy.allocationNote;
+  $('#allocation-note').textContent = strategy.allocationNote || '';
 }
 
 // -------------------------------------------------------------------------
@@ -212,57 +208,63 @@ function renderTracker(portfolio) {
   $('#tot-net').textContent = fmt.eur(portfolio.netIfLiquidated);
 
   const tbody = $('#holdings-tbody');
-  tbody.innerHTML = '';
-  for (const h of portfolio.holdings) {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td class="label">
-        ${h.name.split(' ').slice(0, 4).join(' ')}${h.isLegacy ? ' <span style="font-size:9px;padding:1px 6px;background:rgba(124,154,167,0.2);color:var(--text-muted);border-radius:3px;letter-spacing:0.05em;text-transform:uppercase;margin-left:4px;">LEGACY</span>' : ''}
-        <small>${h.ticker} · ${h.isin}</small>
-      </td>
-      <td class="num">${fmt.num(h.units, 4)}</td>
-      <td class="num">${fmt.eur(h.avgCost, 2)}</td>
-      <td class="num">${fmt.eur(h.currentPrice, 2)}</td>
-      <td class="num">${fmt.eur(h.currentValue)}</td>
-      <td class="num"><span class="delta ${h.pnlPct >= 0 ? 'positive' : 'negative'}">${fmt.pct(h.pnlPct)}</span></td>
-      <td class="num">${(h.effectiveWeight * 100).toFixed(1)}%</td>
-    `;
-    tbody.appendChild(tr);
+  if (tbody) {
+    tbody.innerHTML = '';
+    for (const h of portfolio.holdings) {
+      const tr = document.createElement('tr');
+      const legacyBadge = h.isLegacy
+        ? ' <span class="badge-legacy">LEGACY</span>'
+        : '';
+      tr.innerHTML = `
+        <td class="label">
+          ${h.name.split(' ').slice(0, 4).join(' ')}${legacyBadge}
+          <small>${h.ticker} · ${h.isin}</small>
+        </td>
+        <td class="num">${fmt.num(h.units, 4)}</td>
+        <td class="num">${fmt.eur(h.avgCost, 2)}</td>
+        <td class="num">${fmt.eur(h.currentPrice, 2)}</td>
+        <td class="num">${fmt.eur(h.currentValue)}</td>
+        <td class="num"><span class="delta ${h.pnlPct >= 0 ? 'positive' : 'negative'}">${fmt.pct(h.pnlPct)}</span></td>
+        <td class="num">${(h.effectiveWeight * 100).toFixed(1)}%</td>
+      `;
+      tbody.appendChild(tr);
+    }
   }
 
-  // Side panel: drawdown + regime + next events
   const globalMetrics = state.metrics.global;
   if (globalMetrics) {
-    $('#metric-dd-ath').textContent = fmt.pct(globalMetrics.ddATH);
-    $('#metric-dd-ath').className = `metric-value ${globalMetrics.ddATH < -0.05 ? 'negative' : 'positive'}`;
-    $('#metric-dd-12m').textContent = fmt.pct(globalMetrics.dd12M);
-    $('#metric-dd-12m').className = `metric-value ${globalMetrics.dd12M < -0.05 ? 'negative' : 'positive'}`;
-    $('#metric-mad').textContent = fmt.pct(globalMetrics.madMA200);
-    $('#metric-mad').className = `metric-value ${globalMetrics.madMA200 < 0 ? 'negative' : 'positive'}`;
-    $('#metric-vol').textContent = globalMetrics.volRolling !== null ? fmt.pct(globalMetrics.volRolling, 1) : '—';
-    $('#metric-z').textContent = globalMetrics.zScore !== null ? globalMetrics.zScore.toFixed(2) : '—';
+    $('#metric-dd-ath').textContent = isNum(globalMetrics.ddATH) ? fmt.pct(globalMetrics.ddATH) : '—';
+    $('#metric-dd-ath').className = `metric-value ${isNum(globalMetrics.ddATH) && globalMetrics.ddATH < -0.05 ? 'negative' : 'positive'}`;
+    $('#metric-dd-12m').textContent = isNum(globalMetrics.dd12M) ? fmt.pct(globalMetrics.dd12M) : '—';
+    $('#metric-dd-12m').className = `metric-value ${isNum(globalMetrics.dd12M) && globalMetrics.dd12M < -0.05 ? 'negative' : 'positive'}`;
+    $('#metric-mad').textContent = isNum(globalMetrics.madMA200) ? fmt.pct(globalMetrics.madMA200) : '—';
+    $('#metric-mad').className = `metric-value ${isNum(globalMetrics.madMA200) && globalMetrics.madMA200 < 0 ? 'negative' : 'positive'}`;
+    $('#metric-vol').textContent = isNum(globalMetrics.volRolling) ? fmt.pct(globalMetrics.volRolling, 1) : '—';
+    $('#metric-z').textContent = isNum(globalMetrics.zScore) ? globalMetrics.zScore.toFixed(2) : '—';
   } else {
     ['#metric-dd-ath', '#metric-dd-12m', '#metric-mad', '#metric-vol', '#metric-z'].forEach(s => {
-      $(s).textContent = '—';
+      const el = $(s);
+      if (el) el.textContent = '—';
     });
   }
 
-  // Next events
   const events = getNextScheduledEvents();
   const evBox = $('#calendar-events');
-  evBox.innerHTML = '';
-  events.slice(0, 2).forEach(ev => {
-    const d = document.createElement('div');
-    d.className = 'calendar-event';
-    d.innerHTML = `
-      <div class="calendar-day">${ev.date.getDate()}</div>
-      <div class="calendar-info">
-        <div class="month">${fmt.monthShort(ev.date)} ${ev.date.getFullYear()}</div>
-        <div class="desc">${ev.description}</div>
-      </div>
-    `;
-    evBox.appendChild(d);
-  });
+  if (evBox) {
+    evBox.innerHTML = '';
+    events.slice(0, 2).forEach(ev => {
+      const d = document.createElement('div');
+      d.className = 'calendar-event';
+      d.innerHTML = `
+        <div class="calendar-day">${ev.date.getDate()}</div>
+        <div class="calendar-info">
+          <div class="month">${fmt.monthShort(ev.date)} ${ev.date.getFullYear()}</div>
+          <div class="desc">${ev.description}</div>
+        </div>
+      `;
+      evBox.appendChild(d);
+    });
+  }
 }
 
 // -------------------------------------------------------------------------
@@ -271,6 +273,7 @@ function renderTracker(portfolio) {
 function renderMCResults(results) {
   if (!results) return;
   const tbody = $('#mc-tbody');
+  if (!tbody) return;
   tbody.innerHTML = '';
 
   for (const s of results.strategies) {
@@ -306,8 +309,10 @@ function setupTaxSim() {
     const cost = parseFloat($('#tax-cost').value);
     const price = parseFloat($('#tax-price').value);
     const out = $('#tax-result');
+    if (!out) return;
 
     if (!amt || amt <= 0) {
+      out.className = 'result-box';
       out.innerHTML = '<div class="muted">Inserisci un importo per simulare la vendita.</div>';
       return;
     }
@@ -364,23 +369,33 @@ function setupRealEstate() {
       salePrice: parseFloat($('#re-sale').value) || 0,
       durationMonths: parseFloat($('#re-duration').value) || 6,
       renovation: parseFloat($('#re-renovation').value) || 0,
-      isFirstHome: $('#re-firsthome').checked,
-      isNewBuilding: $('#re-newbuilding').checked,
+      isFirstHome: $('#re-firsthome')?.checked || false,
+      isNewBuilding: $('#re-newbuilding')?.checked || false,
       holdingCostsMonthly: parseFloat($('#re-holding').value) || 0,
+      cadastralValue: parseFloat($('#re-cadastral')?.value) || 0,
     };
     const out = $('#re-result');
+    if (!out) return;
 
     if (input.purchasePrice <= 0 || input.salePrice <= 0) {
+      out.className = 'result-box';
       out.innerHTML = '<div class="muted">Inserisci prezzo acquisto e vendita per calcolare l\'IRR.</div>';
+      const stressBox = $('#re-stress');
+      if (stressBox) stressBox.innerHTML = '';
       return;
     }
 
     const r = computeFlip(input);
     out.className = `result-box ${r.verdictClass}`;
 
+    const cvNote = r.cadastralValueEstimated
+      ? ` <span class="muted">(stimato 60% del prezzo)</span>`
+      : '';
+
     out.innerHTML = `
       <div class="result-verdict">${r.verdict}</div>
       <div style="display:grid;grid-template-columns:1fr auto;gap:8px 16px;font-size:13px;">
+        <span class="muted">Valore catastale</span><span class="text-right">${fmt.eur(r.cadastralValue)}${cvNote}</span>
         <span class="muted">Capitale impiegato</span><span class="text-right">${fmt.eur(r.capitalEmployed)}</span>
         <span class="muted">Profitto netto</span>
         <span class="text-right ${r.netProfit >= 0 ? 'positive' : 'negative'}"><strong>${fmt.eur(r.netProfit)}</strong></span>
@@ -412,7 +427,6 @@ function setupRealEstate() {
       </div>
     `;
 
-    // Stress test
     const stressRows = stressTest(input);
     const stressBox = $('#re-stress');
     if (stressBox) {
@@ -440,47 +454,69 @@ function setupRealEstate() {
 }
 
 // -------------------------------------------------------------------------
-// SETTINGS MODAL
+// SETTINGS MODAL — solo manual prices, no più Twelve Data
 // -------------------------------------------------------------------------
 function setupSettings() {
   const modal = $('#settings-modal');
-  const open = () => modal.classList.add('show');
+  if (!modal) return;
+  const open = () => {
+    modal.classList.add('show');
+    populateManualPrices();
+  };
   const close = () => modal.classList.remove('show');
 
-  $('#btn-settings').addEventListener('click', open);
-  $('#settings-close').addEventListener('click', close);
+  $('#btn-settings')?.addEventListener('click', open);
+  $('#settings-close')?.addEventListener('click', close);
   modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
 
-  // Pre-populate
-  $('#api-key-input').value = getApiKey();
-  
-  // Manual prices fields
-  config.allocation.forEach((alloc) => {
-    const wrap = document.createElement('div');
-    wrap.className = 'field';
-    wrap.innerHTML = `
-      <label>Prezzo manuale ${alloc.name} (${alloc.ticker})</label>
-      <input type="number" step="0.01" id="manual-${alloc.id}" placeholder="es. 124.50" />
-    `;
-    $('#manual-prices').appendChild(wrap);
+  // A11y: chiusura con Esc
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal.classList.contains('show')) close();
   });
 
-  $('#settings-save').addEventListener('click', () => {
-    const key = $('#api-key-input').value.trim();
-    if (key) setApiKey(key);
+  function populateManualPrices() {
+    const wrap = $('#manual-prices');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+    const manuals = getManualPrices();
+    config.allocation.forEach((alloc) => {
+      const existing = manuals[alloc.ticker];
+      const age = getManualPriceAge(alloc.ticker);
+      const ageNote = age !== null ? ` <span class="muted">· aggiornato ${age}h fa</span>` : '';
+      const div = document.createElement('div');
+      div.className = 'field';
+      div.innerHTML = `
+        <label>${alloc.name}${ageNote}</label>
+        <input type="number" step="0.01" id="manual-${alloc.id}" placeholder="es. 131.50" value="${existing?.price ?? ''}" aria-label="Prezzo manuale ${alloc.ticker}">
+        <div class="field-help">Ticker: ${alloc.ticker} · Trova il prezzo attuale su <a href="https://www.justetf.com/it/etf-profile.html?isin=${alloc.isin}" target="_blank" rel="noopener">justETF</a></div>
+      `;
+      wrap.appendChild(div);
+    });
+  }
+
+  $('#settings-save')?.addEventListener('click', () => {
     config.allocation.forEach(alloc => {
-      const v = parseFloat(document.getElementById(`manual-${alloc.id}`).value);
+      const el = document.getElementById(`manual-${alloc.id}`);
+      if (!el) return;
+      const v = parseFloat(el.value);
       if (v > 0) setManualPrice(alloc.ticker, v);
     });
     close();
     refresh(true);
   });
 
-  $('#settings-clear').addEventListener('click', () => {
-    if (confirm('Cancellare cache prezzi, Monte Carlo e overrides manuali?')) {
+  $('#settings-clear-manual')?.addEventListener('click', () => {
+    if (confirm('Cancellare tutti i prezzi manuali? Tornerà ai fallback statici.')) {
+      clearManualPrices();
+      populateManualPrices();
+      refresh(true);
+    }
+  });
+
+  $('#settings-clear')?.addEventListener('click', () => {
+    if (confirm('Cancellare cache prezzi e Monte Carlo? (i prezzi manuali restano)')) {
       clearAllCache();
       clearMCCache();
-      localStorage.removeItem('pd_manual_prices_v1');
       location.reload();
     }
   });
@@ -515,33 +551,45 @@ async function refresh(forceReload = false) {
   renderHeaderStatus();
   destroyAllCharts();
 
-  // 1. Prices
-  state.prices = await getAllPrices(forceReload);
+  // 1. Prices (con timeout per non bloccare se Stooq non risponde)
+  try {
+    state.prices = await getAllPrices(forceReload);
+  } catch (err) {
+    console.warn('Price fetch failed:', err);
+    state.prices = {};
+  }
 
-  // 2. Portfolio
+  // 2. Portfolio (sempre calcolabile, anche con prezzi fallback)
   state.portfolio = computePortfolio(state.prices);
 
-  // 3. Historical metrics for global ETF (per drawdown / strategy)
+  // 3. Historical metrics (best-effort, può fallire silenziosamente)
   const globalAlloc = config.allocation.find(a => a.role === 'core');
   state.metrics.global = null;
   if (globalAlloc) {
-    state.loading.history = true;
-    const hist = await getHistoricalPrices(globalAlloc.ticker, 252);
-    if (hist.data && hist.data.length > 0) {
-      const currentPrice = state.prices[globalAlloc.ticker]?.price || 0;
-      state.metrics.global = computePriceMetrics(hist.data, currentPrice);
+    try {
+      const hist = await getHistoricalPrices(globalAlloc.ticker, 252);
+      if (hist.data && hist.data.length > 0) {
+        const currentPrice = state.prices[globalAlloc.ticker]?.price || 0;
+        if (currentPrice > 0) {
+          state.metrics.global = computePriceMetrics(hist.data, currentPrice);
+        }
+      }
+    } catch (err) {
+      console.warn('Historical fetch failed:', err);
     }
-    state.loading.history = false;
   }
 
-  // 4. Strategy of the month
+  // 4. Strategy
   state.strategy = getStrategyOfTheMonth(state.metrics.global, state.portfolio);
 
   // 5. Render
   renderHero(state.strategy);
   renderTracker(state.portfolio);
 
-  // 6. Trend chart (5-year projection from current value)
+  // Aggiorna header status di nuovo (potrebbe essere cambiato dopo i fetch)
+  renderHeaderStatus();
+
+  // 6. Trend chart
   state.trendData = generateTrendPaths({
     horizonMonths: 60,
     currentValue: state.portfolio.totalValue,
@@ -549,7 +597,7 @@ async function refresh(forceReload = false) {
   });
   renderTrendChart('#trend-chart', state.trendData);
 
-  // 7. Monte Carlo (async, può tardare)
+  // 7. Monte Carlo (async)
   $('#mc-status').classList.remove('hidden');
   $('#mc-table-wrap').classList.add('hidden');
   $('#mc-progress').textContent = 'Inizializzazione Web Worker...';
@@ -565,7 +613,7 @@ async function refresh(forceReload = false) {
     state.mcResults = mc;
     renderMCResults(mc);
   } catch (err) {
-    $('#mc-status').innerHTML = `<div style="color:var(--accent-negative)">Errore MC: ${err.message}</div>`;
+    $('#mc-status').innerHTML = `<div style="color:var(--accent-negative);padding:24px;text-align:center;">Errore Monte Carlo: ${err.message}</div>`;
   }
 }
 
@@ -580,9 +628,7 @@ export async function initApp() {
 
   $('#btn-refresh')?.addEventListener('click', () => refresh(true));
 
-  // Footer date
   $('#footer-date').textContent = new Date().getFullYear();
 
-  // First render
   await refresh();
 }
