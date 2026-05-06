@@ -1,8 +1,8 @@
 // =============================================================================
-// MONTE CARLO WORKER
+// MONTE CARLO WORKER — FINAL
 // =============================================================================
-// Esegue le 50.000 simulazioni in un Web Worker così l'UI non si freeza.
-// Tutti i calcoli sono vettorizzati su Float64Array per performance.
+// 50.000 simulazioni in Web Worker. UI non si freeza.
+// Vettorizzato su Float64Array per performance.
 // =============================================================================
 
 self.onmessage = function (e) {
@@ -15,10 +15,6 @@ self.onmessage = function (e) {
   }
 };
 
-// -----------------------------------------------------------------------------
-// Random number generation
-// -----------------------------------------------------------------------------
-// Mulberry32 PRNG seedabile per riproducibilità
 function mulberry32(seed) {
   return function () {
     let t = (seed += 0x6D2B79F5);
@@ -28,7 +24,6 @@ function mulberry32(seed) {
   };
 }
 
-// Box-Muller transform per gaussian
 function gaussian(rng) {
   let u = 0, v = 0;
   while (u === 0) u = rng();
@@ -36,13 +31,6 @@ function gaussian(rng) {
   return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
 }
 
-// -----------------------------------------------------------------------------
-// SIMULATION ENGINES
-// -----------------------------------------------------------------------------
-
-/**
- * Strategia: PAC costante mensile
- */
 function simulateConstantPAC(params, monthlyPAC, seed) {
   const { nSim, months, mu, sigma, ter, pv0 } = params;
   const muLog = Math.log(1 + mu) / 12 - 0.5 * Math.pow(sigma / Math.sqrt(12), 2);
@@ -51,21 +39,20 @@ function simulateConstantPAC(params, monthlyPAC, seed) {
 
   const finalValues = new Float64Array(nSim);
   const finalDDs = new Float64Array(nSim);
-  let totalContributed = pv0 + monthlyPAC * months;
+  const totalContributed = pv0 + monthlyPAC * months;
 
   const rng = mulberry32(seed);
 
   for (let s = 0; s < nSim; s++) {
     let v = pv0;
     let peak = pv0;
-    let dd = 0;
     let ddMin = 0;
     for (let m = 0; m < months; m++) {
       const z = gaussian(rng);
       const r = Math.exp(muLog + sigmaM * z - terM) - 1;
       v = (v + monthlyPAC) * (1 + r);
       if (v > peak) peak = v;
-      dd = peak > 0 ? (v / peak) - 1 : 0;
+      const dd = peak > 0 ? (v / peak) - 1 : 0;
       if (dd < ddMin) ddMin = dd;
     }
     finalValues[s] = v;
@@ -79,9 +66,6 @@ function simulateConstantPAC(params, monthlyPAC, seed) {
   };
 }
 
-/**
- * Strategia: PAC tactical con drawdown response
- */
 function simulateTacticalPAC(params, monthlyPAC, seed) {
   const { nSim, months, mu, sigma, ter, pv0, capPerYear, tiers } = params;
   const muLog = Math.log(1 + mu) / 12 - 0.5 * Math.pow(sigma / Math.sqrt(12), 2);
@@ -93,7 +77,7 @@ function simulateTacticalPAC(params, monthlyPAC, seed) {
   const totalContributedArr = new Float64Array(nSim);
 
   const rng = mulberry32(seed);
-  const buffer = new Float64Array(12); // rolling 12-month for DD calc
+  const buffer = new Float64Array(12);
 
   for (let s = 0; s < nSim; s++) {
     let v = pv0;
@@ -103,7 +87,6 @@ function simulateTacticalPAC(params, monthlyPAC, seed) {
     let boostThisYear = 0;
     let lastYearTracked = 0;
 
-    // Init buffer
     for (let i = 0; i < 12; i++) buffer[i] = pv0;
 
     for (let m = 0; m < months; m++) {
@@ -113,12 +96,10 @@ function simulateTacticalPAC(params, monthlyPAC, seed) {
         lastYearTracked = yearIdx;
       }
 
-      // Calcola drawdown da rolling 12M
       let peak12m = -Infinity;
       for (let i = 0; i < 12; i++) if (buffer[i] > peak12m) peak12m = buffer[i];
       const dd12m = peak12m > 0 ? (v / peak12m) - 1 : 0;
 
-      // Determina multiplier
       let multiplier = 1.0;
       if (boostThisYear < capPerYear) {
         for (const t of tiers) {
@@ -141,7 +122,6 @@ function simulateTacticalPAC(params, monthlyPAC, seed) {
       const ddTrue = peak > 0 ? (v / peak) - 1 : 0;
       if (ddTrue < ddMin) ddMin = ddTrue;
 
-      // Aggiorna buffer rolling
       buffer[m % 12] = v;
     }
     finalValues[s] = v;
@@ -153,13 +133,10 @@ function simulateTacticalPAC(params, monthlyPAC, seed) {
     finalValues: Array.from(finalValues),
     finalDDs: Array.from(finalDDs),
     totalContributedArr: Array.from(totalContributedArr),
-    totalContributed: null, // varia per simulazione
+    totalContributed: null,
   };
 }
 
-// -----------------------------------------------------------------------------
-// PERCENTILE & STATS
-// -----------------------------------------------------------------------------
 function percentile(arr, p) {
   const sorted = [...arr].sort((a, b) => a - b);
   const idx = Math.floor((p / 100) * (sorted.length - 1));
@@ -183,9 +160,6 @@ function computeStats(values, contributed) {
   };
 }
 
-// -----------------------------------------------------------------------------
-// PROBABILITÀ E DRAWDOWN
-// -----------------------------------------------------------------------------
 function probAbove(values, threshold) {
   return values.filter(v => v >= threshold).length / values.length;
 }
@@ -194,17 +168,10 @@ function probDDBelow(dds, threshold) {
   return dds.filter(d => d <= threshold).length / dds.length;
 }
 
-// -----------------------------------------------------------------------------
-// MAIN: esegue tutti gli scenari
-// -----------------------------------------------------------------------------
 function runAllStrategies(params) {
   const { months, nSim } = params;
-  const tiers = params.tiers;
   const startTime = Date.now();
 
-  // Riduci nSim per multiple strategies se troppo lento
-  // Manteniamo 50k come da requisito
-  
   const strategies = [
     { id: 'pac500', label: 'PAC €500 costante', fn: () => simulateConstantPAC(params, 500, 42) },
     { id: 'pac400', label: 'PAC €400 costante', fn: () => simulateConstantPAC(params, 400, 43) },
@@ -247,10 +214,6 @@ function runAllStrategies(params) {
         : percentile(sim.totalContributedArr, 50),
     };
   });
-
-  // Confronto: probabilità che PAC tactical batta PAC base costante
-  const constS = strategies.find(s => s.id === 'pac500');
-  // (skip per non rilanciare, già abbiamo i risultati)
 
   return {
     elapsedMs: Date.now() - startTime,
