@@ -177,16 +177,20 @@ function renderHero(strategy) {
   // Warnings
   const wDiv = $('#warnings-list');
   wDiv.innerHTML = '';
-  if (strategy.warnings.length === 0) {
+  const warnsArr = Array.isArray(strategy.warnings) ? strategy.warnings : [];
+  if (warnsArr.length === 0) {
     wDiv.innerHTML = '<div class="warning-item">— Nessun warning attivo</div>';
   } else {
-    (strategy.warnings || []).forEach(w => {
+    warnsArr.forEach(w => {
       const d = document.createElement('div');
       d.className = 'warning-item';
       d.textContent = w;
       wDiv.appendChild(d);
     });
   }
+
+  // Allocation note
+  $('#allocation-note').textContent = strategy.allocationNote || '';
 
   // Allocation note
   $('#allocation-note').textContent = strategy.allocationNote;
