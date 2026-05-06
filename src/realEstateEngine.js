@@ -1,25 +1,45 @@
 // =============================================================================
-// REAL ESTATE ENGINE — IRR / ROI immobiliare
+// REAL ESTATE ENGINE — FINAL
 // =============================================================================
-// Calcoli specifici per operazioni immobiliari Italia, con tutti i costi reali.
+// Calcoli specifici per operazioni immobiliari Italia, con costi reali.
+//
+// FIX vs versione precedente:
+//   - Imposta registro calcolata sul VALORE CATASTALE (non sul prezzo pieno)
+//     per acquisto da privato. Riduce drasticamente la stima delle imposte.
+//     Per prima casa: VC = rendita × 115,5
+//     Per seconda casa: VC = rendita × 126
+//   - Se l'utente non fornisce il valore catastale, lo stima al 60% del prezzo
+//     (assunzione conservativa basata su mercato italiano medio).
 // =============================================================================
 
 import { config } from './config.js';
 
 const ITALY_COSTS = {
-  registroPrimaCasa: 0.02,        // 2% registro prima casa (su valore catastale)
-  registroSecondaCasa: 0.09,      // 9% registro seconda casa
-  imposteIpotec: 0.001,           // 100€ + 100€ fisse, ~0.1%
-  ivaCostruttoreNuova: 0.10,      // 10% IVA su nuova costruzione (non lusso)
-  agenziaCompra: 0.03,            // 3% commissione agenzia + IVA 22%
-  agenziaVende: 0.03,             // 3% commissione agenzia + IVA 22%
-  notaioCompra: 0.015,            // ~1,5% del prezzo (parcella + tasse atto)
-  notaioVende: 0,                 // tipicamente a carico del compratore
-  plusvalenza: 0.26,              // 26% se vendita entro 5 anni (sostitutiva)
+  registroPrimaCasa: 0.02,      // 2% su valore catastale
+  registroSecondaCasa: 0.09,    // 9% su valore catastale
+  ipotecCatPrimaCasa: 100,      // 50 + 50 fissi
+  ipotecCatSecondaCasa: 100,    // 50 + 50 fissi (sempre fissi se acquisto da privato)
+  ivaCostruttoreNuovaPrima: 0.04,    // IVA 4% su prezzo se prima casa da costruttore
+  ivaCostruttoreNuovaSeconda: 0.10,  // IVA 10% su prezzo seconda casa da costruttore
+  registroFissoCostruttore: 200,
+  ipotecCatCostruttore: 400,    // 200 + 200 fissi
+  agenziaCompra: 0.03,          // 3% + IVA 22%
+  agenziaVende: 0.03,           // 3% + IVA 22%
+  notaioCompra: 0.015,          // ~1,5% del prezzo (parcella + tasse atto)
+  plusvalenza: 0.26,            // 26% se vendita entro 5 anni (sostitutiva)
 };
 
 /**
- * Calcola il flip immobiliare con tutti i costi
+ * Stima del valore catastale se non fornito esplicitamente.
+ * Heuristica: in Italia il valore catastale è tipicamente 50-70% del prezzo
+ * di mercato per immobili residenziali. Usiamo 60% come stima conservativa.
+ */
+function estimateCadastralValue(purchasePrice) {
+  return purchasePrice * 0.60;
+}
+
+/**
+ * Calcola il flip immobiliare con tutti i costi.
  *
  * @param {Object} input
  * @param {number} input.purchasePrice - prezzo acquisto
@@ -28,7 +48,8 @@ const ITALY_COSTS = {
  * @param {number} input.renovation - costi ristrutturazione
  * @param {boolean} input.isNewBuilding - immobile da costruttore (IVA)
  * @param {boolean} input.isFirstHome - prima casa
- * @param {number} input.holdingCostsMonthly - spese mensili durante hold (utenze, IMU, etc.)
+ * @param {number} input.holdingCostsMonthly - spese mensili durante hold
+ * @param {number} [input.cadastralValue] - valore catastale (se omesso, stimato 60%)
  */
 export function computeFlip(input) {
   const {
@@ -39,27 +60,31 @@ export function computeFlip(input) {
     isNewBuilding = false,
     isFirstHome = false,
     holdingCostsMonthly = 0,
+    cadastralValue: cvInput,
   } = input;
 
+  // Valore catastale: input utente o stima al 60% del prezzo
+  const cadastralValue = cvInput && cvInput > 0 ? cvInput : estimateCadastralValue(purchasePrice);
+
   // ----- COSTI ACQUISTO -----
-  let registro, iva;
+  let registro, iva, ipotec;
   if (isNewBuilding) {
-    iva = purchasePrice * ITALY_COSTS.ivaCostruttoreNuova;
-    registro = 200; // fissa
+    iva = purchasePrice * (isFirstHome ? ITALY_COSTS.ivaCostruttoreNuovaPrima : ITALY_COSTS.ivaCostruttoreNuovaSeconda);
+    registro = ITALY_COSTS.registroFissoCostruttore;
+    ipotec = ITALY_COSTS.ipotecCatCostruttore;
   } else {
     iva = 0;
+    // FIX CRITICO: registro calcolato sul VALORE CATASTALE (non sul prezzo pieno)
     registro = isFirstHome
-      ? purchasePrice * ITALY_COSTS.registroPrimaCasa
-      : purchasePrice * ITALY_COSTS.registroSecondaCasa;
+      ? cadastralValue * ITALY_COSTS.registroPrimaCasa
+      : cadastralValue * ITALY_COSTS.registroSecondaCasa;
+    ipotec = isFirstHome ? ITALY_COSTS.ipotecCatPrimaCasa : ITALY_COSTS.ipotecCatSecondaCasa;
   }
-  const ipotec = isNewBuilding ? 400 : 100;
   const notaioAcq = Math.max(2500, purchasePrice * ITALY_COSTS.notaioCompra);
   const agenziaAcq = purchasePrice * ITALY_COSTS.agenziaCompra * 1.22;
 
-  // ----- HOLDING COSTS -----
   const holdingTot = holdingCostsMonthly * durationMonths;
 
-  // ----- CAPITALE TOTALE IMPIEGATO -----
   const capitalEmployed =
     purchasePrice + iva + registro + ipotec + notaioAcq + agenziaAcq +
     renovation + holdingTot;
@@ -68,33 +93,24 @@ export function computeFlip(input) {
   const agenziaVend = salePrice * ITALY_COSTS.agenziaVende * 1.22;
 
   // ----- PLUSVALENZA TASSATA SE < 5 ANNI -----
-  // Il fisco riconosce come "valore di acquisto" il prezzo + costi documentati
   const taxBasis = purchasePrice + iva + registro + notaioAcq + renovation + agenziaAcq;
   const grossPlus = Math.max(0, salePrice - taxBasis);
   const plusTax = grossPlus * ITALY_COSTS.plusvalenza;
 
-  // ----- NETTO -----
   const netProfit = salePrice - agenziaVend - plusTax - capitalEmployed;
   const roc = capitalEmployed > 0 ? netProfit / capitalEmployed : 0;
   const irrAnnualized = capitalEmployed > 0 && netProfit > -capitalEmployed
     ? Math.pow(1 + roc, 12 / durationMonths) - 1
     : -1;
 
-  // Break-even: prezzo vendita per profitto netto = 0
-  // salePrice - agenziaVend - plusTax - capitalEmployed = 0
-  // Approssimazione (se plus tassata): salePrice * (1 - 0.0366) - 0.26 * (salePrice - taxBasis) = capitalEmployed
-  // salePrice * (1 - 0.0366 - 0.26) + 0.26 * taxBasis = capitalEmployed
-  // salePrice = (capitalEmployed - 0.26 * taxBasis) / (1 - 0.0366 - 0.26)
+  // Break-even
   const breakEven = (capitalEmployed - 0.26 * taxBasis) / (1 - 0.0366 - 0.26);
 
-  // Cash-on-cash: rendimento netto / cash effettivamente messo
   const cashOnCash = roc;
 
-  // Confronto con VWCE atteso stesso periodo
   const vwceExpected = capitalEmployed * (Math.pow(1.074, durationMonths / 12) - 1);
   const advantageVsVWCE = netProfit - vwceExpected;
 
-  // ----- VERDETTO -----
   let verdict, verdictClass;
   if (irrAnnualized >= 0.30) {
     verdict = 'OPERAZIONE ECCELLENTE — verifica realismo del prezzo di vendita';
@@ -114,31 +130,21 @@ export function computeFlip(input) {
   }
 
   return {
-    purchasePrice,
-    salePrice,
-    durationMonths,
+    purchasePrice, salePrice, durationMonths,
+    cadastralValue,
+    cadastralValueEstimated: !cvInput || cvInput <= 0,
     capitalEmployed,
     breakdown: {
       iva, registro, ipotec, notaioAcq, agenziaAcq, renovation, holdingTot,
       agenziaVend, taxBasis, grossPlus, plusTax,
     },
-    netProfit,
-    roc,
-    irrAnnualized,
-    cashOnCash,
-    breakEven,
-    vwceExpected,
-    advantageVsVWCE,
-    verdict,
-    verdictClass,
+    netProfit, roc, irrAnnualized, cashOnCash, breakEven,
+    vwceExpected, advantageVsVWCE,
+    verdict, verdictClass,
   };
 }
 
-/**
- * Stress test: variazioni durata e prezzo
- */
 export function stressTest(input) {
-  const baseline = computeFlip(input);
   const scenarios = [
     { name: 'Baseline', input: input },
     { name: 'Durata x2', input: { ...input, durationMonths: input.durationMonths * 2 } },
@@ -146,8 +152,5 @@ export function stressTest(input) {
     { name: 'Vendita -15%', input: { ...input, salePrice: input.salePrice * 0.85 } },
     { name: 'Durata x2 + vendita -10%', input: { ...input, durationMonths: input.durationMonths * 2, salePrice: input.salePrice * 0.9 } },
   ];
-  return scenarios.map(s => ({
-    name: s.name,
-    ...computeFlip(s.input),
-  }));
+  return scenarios.map(s => ({ name: s.name, ...computeFlip(s.input) }));
 }
