@@ -40,11 +40,34 @@ export function computeHolding(allocItem, holding, currentPrice) {
  * Stato completo del portafoglio
  */
 export function computePortfolio(prices) {
-  const holdings = config.allocation.map((alloc) => {
-    const holding = config.initialHoldings.find(h => h.isin === alloc.isin);
-    const priceData = prices[alloc.ticker];
+  // Costruisci una mappa ISIN → allocation target (per role/weight)
+  const allocByISIN = new Map();
+  config.allocation.forEach(a => allocByISIN.set(a.isin, a));
+
+  // Itera TUTTE le posizioni reali (initialHoldings), non solo le target
+  const holdings = (config.initialHoldings || []).map((holding) => {
+    const alloc = allocByISIN.get(holding.isin);
+
+    // Se è una posizione target (VWCE, CSNDX): usa allocation come metadata
+    // Se è legacy (CSPX, SWDA, VETA): crea un placeholder con role 'legacy'
+    const allocItem = alloc || {
+      id: 'legacy-' + holding.isin.slice(-4).toLowerCase(),
+      name: holding._note ? holding._note.split(':')[0] : 'Legacy ' + holding.isin,
+      ticker: holding.isin,
+      isin: holding.isin,
+      weight: 0,
+      role: 'legacy',
+      ter: 0,
+    };
+
+    // Prezzo: live > fallback > 0
+    const priceData = alloc ? prices[alloc.ticker] : null;
     const price = priceData?.price ?? holding?.currentPriceFallback ?? 0;
-    return computeHolding(alloc, holding, price);
+
+    const computed = computeHolding(allocItem, holding, price);
+    computed.isLegacy = !alloc;
+    computed.note = holding._note || '';
+    return computed;
   });
 
   const totalValue = holdings.reduce((s, h) => s + h.currentValue, 0);
@@ -59,7 +82,7 @@ export function computePortfolio(prices) {
     deviationFromTarget: (totalValue > 0 ? h.currentValue / totalValue : 0) - h.weight,
   }));
 
-  // Stima tasse latenti (in caso di liquidazione totale)
+  // Tasse latenti
   const latentTax = totalPnL > 0 ? totalPnL * config.tax.capitalGainsRate : 0;
 
   return {
