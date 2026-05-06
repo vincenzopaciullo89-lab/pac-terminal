@@ -1,8 +1,8 @@
 // =============================================================================
-// CHARTS — Chart.js wrappers
+// CHARTS — FINAL
 // =============================================================================
-// Trend chart (P25/P50/P75 bands) + MC distribution chart
-// Imports Chart.js da CDN (caricato via <script> in index.html)
+// Trend chart (P5/P25/P50/P75/P95) + MC distribution chart.
+// Chart.js caricato via CDN nell'index.html.
 // =============================================================================
 
 const chartInstances = new Map();
@@ -20,15 +20,13 @@ const COLORS = {
   info: '#60A5FA',
 };
 
-function commonOptions() {
+function commonOptionsTrend() {
   return {
     responsive: true,
     maintainAspectRatio: false,
     interaction: { intersect: false, mode: 'index' },
     plugins: {
-      legend: {
-        display: false,
-      },
+      legend: { display: false },
       tooltip: {
         backgroundColor: '#060F13',
         borderColor: '#244F5F',
@@ -39,6 +37,11 @@ function commonOptions() {
         bodyColor: COLORS.text,
         bodyFont: { family: 'JetBrains Mono', size: 11 },
         callbacks: {
+          title: function (ctx) {
+            const m = ctx[0]?.parsed?.x ?? 0;
+            const years = (m / 12).toFixed(1);
+            return `Mese ${m} (${years}y)`;
+          },
           label: function (ctx) {
             const v = ctx.parsed.y;
             const formatted = new Intl.NumberFormat('it-IT', {
@@ -56,9 +59,10 @@ function commonOptions() {
         ticks: {
           color: COLORS.text,
           font: { family: 'JetBrains Mono', size: 10 },
+          stepSize: 12,
           callback: (v) => {
             const years = v / 12;
-            return years % 1 === 0 ? `${years}y` : '';
+            return Number.isInteger(years) ? `${years}y` : '';
           },
         },
       },
@@ -83,7 +87,7 @@ export function destroyAllCharts() {
 }
 
 /**
- * Trend chart: P25/P50/P75 bands con linea contributi cumulati
+ * Trend chart con bande probabilistiche.
  */
 export function renderTrendChart(selector, trendData) {
   if (!window.Chart || !trendData) return;
@@ -91,23 +95,15 @@ export function renderTrendChart(selector, trendData) {
   if (!canvas) return;
   if (chartInstances.has(selector)) chartInstances.get(selector).destroy();
 
-  const ctx = canvas.getContext('2d');
-  const labels = trendData.map(d => d.month);
-
-  // Gradient per la P50
-  const grad = ctx.createLinearGradient(0, 0, 0, 380);
-  grad.addColorStop(0, 'rgba(45, 212, 191, 0.4)');
-  grad.addColorStop(1, 'rgba(45, 212, 191, 0.02)');
+  const points = trendData.map(d => ({ x: d.month }));
 
   const chart = new Chart(canvas, {
     type: 'line',
     data: {
-      labels,
       datasets: [
-        // P95 (banda esterna superiore)
         {
           label: 'P95 (best 5%)',
-          data: trendData.map(d => d.p95),
+          data: trendData.map(d => ({ x: d.month, y: d.p95 })),
           borderColor: 'rgba(45, 212, 191, 0.25)',
           borderWidth: 1,
           borderDash: [3, 3],
@@ -116,21 +112,19 @@ export function renderTrendChart(selector, trendData) {
           fill: false,
           tension: 0.3,
         },
-        // P75 (banda alta)
         {
           label: 'P75',
-          data: trendData.map(d => d.p75),
+          data: trendData.map(d => ({ x: d.month, y: d.p75 })),
           borderColor: 'rgba(45, 212, 191, 0.45)',
           borderWidth: 1,
           backgroundColor: COLORS.positiveBand,
           pointRadius: 0,
-          fill: '+1', // riempie verso il prossimo dataset (P25)
+          fill: '+1',
           tension: 0.3,
         },
-        // P25 (banda bassa)
         {
           label: 'P25',
-          data: trendData.map(d => d.p25),
+          data: trendData.map(d => ({ x: d.month, y: d.p25 })),
           borderColor: 'rgba(45, 212, 191, 0.45)',
           borderWidth: 1,
           backgroundColor: 'transparent',
@@ -138,10 +132,9 @@ export function renderTrendChart(selector, trendData) {
           fill: false,
           tension: 0.3,
         },
-        // P50 (mediana)
         {
           label: 'P50 atteso',
-          data: trendData.map(d => d.p50),
+          data: trendData.map(d => ({ x: d.month, y: d.p50 })),
           borderColor: COLORS.positive,
           borderWidth: 2,
           backgroundColor: 'transparent',
@@ -149,10 +142,9 @@ export function renderTrendChart(selector, trendData) {
           fill: false,
           tension: 0.3,
         },
-        // P5 (banda esterna inferiore)
         {
           label: 'P5 (worst 5%)',
-          data: trendData.map(d => d.p5),
+          data: trendData.map(d => ({ x: d.month, y: d.p5 })),
           borderColor: 'rgba(248, 113, 113, 0.4)',
           borderWidth: 1,
           borderDash: [3, 3],
@@ -161,10 +153,9 @@ export function renderTrendChart(selector, trendData) {
           fill: false,
           tension: 0.3,
         },
-        // Contributi cumulati
         {
           label: 'Versato cumulato',
-          data: trendData.map(d => d.contributed),
+          data: trendData.map(d => ({ x: d.month, y: d.contributed })),
           borderColor: COLORS.warning,
           borderWidth: 1.5,
           borderDash: [6, 4],
@@ -174,13 +165,15 @@ export function renderTrendChart(selector, trendData) {
         },
       ],
     },
-    options: commonOptions(),
+    options: commonOptionsTrend(),
   });
   chartInstances.set(selector, chart);
 }
 
 /**
- * MC Distribution: barre orizzontali, valore mediano per strategia
+ * MC Distribution: barre orizzontali stacked.
+ * NB: usiamo dati assoluti (P5, P50, P95) ma li renderizziamo come delta
+ * per ottenere effetto "stacked bar" che rappresenta P5→P50→P95.
  */
 export function renderMCDistributionChart(selector, mcResults) {
   if (!window.Chart || !mcResults) return;
@@ -189,9 +182,9 @@ export function renderMCDistributionChart(selector, mcResults) {
   if (chartInstances.has(selector)) chartInstances.get(selector).destroy();
 
   const labels = mcResults.strategies.map(s => s.label);
-  const p5 = mcResults.strategies.map(s => s.gross.p5);
-  const p50 = mcResults.strategies.map(s => s.gross.p50);
-  const p95 = mcResults.strategies.map(s => s.gross.p95);
+  const p5 = mcResults.strategies.map(s => Math.max(0, s.gross.p5));   // protezione: clamp a 0
+  const p50 = mcResults.strategies.map(s => Math.max(0, s.gross.p50));
+  const p95 = mcResults.strategies.map(s => Math.max(0, s.gross.p95));
 
   const chart = new Chart(canvas, {
     type: 'bar',
@@ -206,28 +199,38 @@ export function renderMCDistributionChart(selector, mcResults) {
         },
         {
           label: 'Mediana',
-          data: p50.map((v, i) => v - p5[i]),
+          data: p50.map((v, i) => Math.max(0, v - p5[i])),
           backgroundColor: 'rgba(45, 212, 191, 0.7)',
           borderRadius: 2,
         },
         {
           label: 'P95 (best)',
-          data: p95.map((v, i) => v - p50[i]),
+          data: p95.map((v, i) => Math.max(0, v - p50[i])),
           backgroundColor: 'rgba(45, 212, 191, 0.3)',
           borderRadius: 2,
         },
       ],
     },
     options: {
-      ...commonOptions(),
+      responsive: true,
+      maintainAspectRatio: false,
       indexAxis: 'y',
       plugins: {
-        ...commonOptions().plugins,
-        legend: { display: true, labels: { color: COLORS.text, font: { family: 'JetBrains Mono', size: 11 } } },
+        legend: {
+          display: true,
+          labels: { color: COLORS.text, font: { family: 'JetBrains Mono', size: 11 } },
+        },
         tooltip: {
-          ...commonOptions().plugins.tooltip,
+          backgroundColor: '#060F13',
+          borderColor: '#244F5F',
+          borderWidth: 1,
+          padding: 12,
+          titleColor: COLORS.textBright,
+          titleFont: { family: 'JetBrains Mono', size: 11, weight: 600 },
+          bodyColor: COLORS.text,
+          bodyFont: { family: 'JetBrains Mono', size: 11 },
           callbacks: {
-            label: function(ctx) {
+            label: function (ctx) {
               const idx = ctx.dataIndex;
               const datasetIdx = ctx.datasetIndex;
               let val;
