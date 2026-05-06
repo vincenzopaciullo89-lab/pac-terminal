@@ -1,51 +1,49 @@
 // =============================================================================
-// PORTFOLIO DASHBOARD — CONFIG
+// PORTFOLIO DASHBOARD — CONFIG (FINAL)
 // =============================================================================
-// File di configurazione principale. Modifica qui tutti i parametri della
-// strategia. Cambia → ricarica pagina → tutto si aggiorna.
+// Configurazione personalizzata per Vincenzo M. P.
+// Stato al 6 maggio 2026: 4 posizioni esistenti dai vecchi PAC.
+// Da giugno 2026: nuovo PAC 90% VWCE + 10% CSNDX.
+//
+// ⚠️ MANUTENZIONE MENSILE:
+// Le posizioni vengono aggiornate ad ogni esecuzione PAC modificando
+// initialHoldings (campo "units"). Il PMC si ricalcola con la formula:
+//   nuovo_PMC = ((unitsOld * pmcOld) + (unitsNew * priceAcquisto)) / unitsTot
 // =============================================================================
 
 export const config = {
-  // -------------------------------------------------------------------------
-  // PROFILO INVESTITORE
-  // -------------------------------------------------------------------------
   investor: {
     name: 'Vincenzo M. P.',
     baseCurrency: 'EUR',
     fiscalResidency: 'IT',
     horizonYears: 20,
-    riskProfile: 'aggressive', // aggressive | balanced | conservative
+    riskProfile: 'aggressive',
   },
 
-  // -------------------------------------------------------------------------
-  // PAC AUTOMATICO
-  // -------------------------------------------------------------------------
   pac: {
-    baseMonthlyAmount: 500,        // PAC base €/mese
-    transferDayOfMonth: 29,        // bonifico verso TR
-    investmentDayOfMonth: 2,       // acquisto ETF
+    baseMonthlyAmount: 500,
+    transferDayOfMonth: 29,
+    investmentDayOfMonth: 2,
     broker: 'Trade Republic',
-    capBoostMonthsPerYear: 6,      // cap mesi di boost per anno solare
+    capBoostMonthsPerYear: 6,
   },
 
   // -------------------------------------------------------------------------
-  // ALLOCAZIONE PORTAFOGLIO
+  // ALLOCAZIONE TARGET (per i nuovi PAC dal mese prossimo)
   // -------------------------------------------------------------------------
-  // SOSTITUISCI ISIN/TICKER con quelli che effettivamente userai sul broker.
-  // I valori sotto sono SUGGERIMENTI realistici e verificabili su justETF.
   allocation: [
     {
       id: 'global',
       name: 'Vanguard FTSE All-World UCITS ETF Acc',
-      ticker: 'VWCE.MI',           // Borsa Italiana (Twelve Data symbol)
+      ticker: 'VWCE.MI',
       isin: 'IE00BK5BQT80',
       weight: 0.90,
       role: 'core',
-      ter: 0.0019,                  // 0,19%
+      ter: 0.0019,
       replication: 'physical-sampling',
       distribution: 'accumulating',
       domicile: 'IE',
-      assumedReturnAnnual: 0.074,   // mediana hybrid storico/CMA
+      assumedReturnAnnual: 0.074,
       assumedVolAnnual: 0.142,
     },
     {
@@ -55,35 +53,60 @@ export const config = {
       isin: 'IE00B53SZB19',
       weight: 0.10,
       role: 'satellite-tech',
-      ter: 0.0033,                  // 0,33%
+      ter: 0.0033,
       replication: 'physical',
       distribution: 'accumulating',
       domicile: 'IE',
-      assumedReturnAnnual: 0.095,   // più alto MA con vol più alta
+      assumedReturnAnnual: 0.095,
       assumedVolAnnual: 0.220,
     },
   ],
 
   // -------------------------------------------------------------------------
-  // POSIZIONI INIZIALI (compila quando entri operativo)
+  // POSIZIONI ATTUALI (dai vecchi PAC, da CSV transazioni TR)
   // -------------------------------------------------------------------------
-  // Se lasci tutto a 0, il sito assume "stai partendo da zero oggi".
+  // Le posizioni CSPX, SWDA, VETA sono ferme (PAC interrotti):
+  // restano in portafoglio e si diluiranno nel tempo con i nuovi PAC.
+  // CSNDX riprende a crescere come satellite del nuovo target 10%.
+  // -------------------------------------------------------------------------
   initialHoldings: [
     {
       isin: 'IE00BK5BQT80',
-      units: 0,                     // quote già detenute
-      averageCost: 0,               // PMC €/quota
-      currentPriceFallback: 124.50, // se API non risponde, usa questo
+      units: 0,
+      averageCost: 0,
+      currentPriceFallback: 131.50,
+      _note: 'VWCE: PAC parte da giugno 2026 con 90% del versamento',
     },
     {
       isin: 'IE00B53SZB19',
       units: 0.527961,
       averageCost: 1259.57,
       currentPriceFallback: 1356.59,
+      _note: 'CSNDX: posizione esistente, riprende col 10% dei nuovi PAC',
+    },
+    {
+      isin: 'IE00B5BMR087',
+      units: 1.322009,
+      averageCost: 631.61,
+      currentPriceFallback: 661.36,
+      _note: 'CSPX: PAC interrotto, posizione ferma (legacy)',
+    },
+    {
+      isin: 'IE00B4L5Y983',
+      units: 9.645653,
+      averageCost: 113.00,
+      currentPriceFallback: 117.34,
+      _note: 'SWDA: PAC interrotto, posizione ferma (legacy)',
+    },
+    {
+      isin: 'IE00BH04GL39',
+      units: 12.894304,
+      averageCost: 24.04,
+      currentPriceFallback: 23.71,
+      _note: 'VETA: PAC interrotto, posizione ferma (legacy)',
     },
   ],
 
-  // Cash extra disponibile FUORI dal portafoglio ETF (per warning qualitativo)
   liquidity: {
     emergencyFund: 6000,
     operationalCash: 2000,
@@ -94,67 +117,49 @@ export const config = {
   // STRATEGY ENGINE — Drawdown-Responsive Contribution
   // -------------------------------------------------------------------------
   strategyTiers: [
-    { tier: 0, ddMin: -0.05, ddMax: 0.99,  multiplier: 1.00, label: 'Normal',         description: 'Mercato vicino al trend' },
-    { tier: 1, ddMin: -0.10, ddMax: -0.05, multiplier: 1.20, label: 'Tier 1 Mild',    description: 'Drawdown lieve' },
-    { tier: 2, ddMin: -0.15, ddMax: -0.10, multiplier: 1.50, label: 'Tier 2 Moderate',description: 'Drawdown moderato' },
-    { tier: 3, ddMin: -0.25, ddMax: -0.15, multiplier: 2.00, label: 'Tier 3 Severe',  description: 'Drawdown severo' },
-    { tier: 4, ddMin: -1.00, ddMax: -0.25, multiplier: 2.50, label: 'Tier 4 Extreme', description: 'Drawdown estremo' },
+    { tier: 0, ddMin: -0.05, ddMax:  0.99, multiplier: 1.00, label: 'Normal',          description: 'Mercato vicino al trend' },
+    { tier: 1, ddMin: -0.10, ddMax: -0.05, multiplier: 1.20, label: 'Tier 1 Mild',     description: 'Drawdown lieve' },
+    { tier: 2, ddMin: -0.15, ddMax: -0.10, multiplier: 1.50, label: 'Tier 2 Moderate', description: 'Drawdown moderato' },
+    { tier: 3, ddMin: -0.25, ddMax: -0.15, multiplier: 2.00, label: 'Tier 3 Severe',   description: 'Drawdown severo' },
+    { tier: 4, ddMin: -1.00, ddMax: -0.25, multiplier: 2.50, label: 'Tier 4 Extreme',  description: 'Drawdown estremo' },
   ],
 
-  // Pesi per il composite trigger score (drawdown 12M + deviazione MA200)
   triggerComposite: {
     weightDD12M: 0.6,
     weightMA200: 0.4,
   },
 
-  // -------------------------------------------------------------------------
-  // FISCALITÀ (Italia)
-  // -------------------------------------------------------------------------
   tax: {
-    capitalGainsRate: 0.26,          // ETF non white-list
-    stampDutyAnnual: 0.002,          // bollo 0,2% annuo
-    regime: 'amministrato',          // TR Italia da gen 2025
+    capitalGainsRate: 0.26,
+    stampDutyAnnual: 0.002,
+    regime: 'amministrato',
   },
 
-  // -------------------------------------------------------------------------
-  // MONTE CARLO
-  // -------------------------------------------------------------------------
   monteCarlo: {
     nSimulations: 50000,
-    horizons: [12, 36, 60, 120, 240, 360], // mesi
-    distribution: 'lognormal',        // lognormal | studentT | bootstrap
+    horizons: [12, 36, 60, 120, 240, 360],
+    distribution: 'lognormal',
     inflation: 0.025,
     riskFreeRate: 0.02,
   },
 
-  // -------------------------------------------------------------------------
-  // PRICE PROVIDER
-  // -------------------------------------------------------------------------
   priceProvider: {
-    primary: 'twelvedata',
-    apiKey: '',                       // utente inserisce dalla UI (salvato in localStorage)
+    primary: 'manual',  // manual | stooq
     cacheHours: 24,
-    fallbackToManual: true,
   },
 
-  // -------------------------------------------------------------------------
-  // DESIGN / UI
-  // -------------------------------------------------------------------------
   ui: {
     locale: 'it-IT',
     currency: 'EUR',
     theme: 'terminal-dark',
-    decimalPlaces: 2,
     showAdvancedMetrics: true,
   },
 };
 
-// Helper per accedere alla config in modo sicuro
 export function getConfig(path, fallback = null) {
   return path.split('.').reduce((obj, key) => (obj?.[key] !== undefined ? obj[key] : fallback), config);
 }
 
-// Validazione di base
 export function validateConfig() {
   const totalWeight = config.allocation.reduce((sum, a) => sum + a.weight, 0);
   if (Math.abs(totalWeight - 1.0) > 0.001) {
