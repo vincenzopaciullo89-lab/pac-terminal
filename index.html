@@ -9,16 +9,13 @@
 <link rel="stylesheet" href="styles/styles.css">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230A1A20'/%3E%3Ccircle cx='16' cy='16' r='5' fill='%232DD4BF'/%3E%3C/svg%3E">
 
-<!-- Chart.js da CDN (zero installation) -->
+<!-- Chart.js da CDN -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
 
 <body>
 <div class="app">
 
-<!-- =================================================================== -->
-<!-- HEADER                                                                -->
-<!-- =================================================================== -->
 <header class="app-header">
   <div class="container header-inner">
     <div class="brand">
@@ -31,21 +28,16 @@
         <span class="status-text">Inizializzazione…</span>
       </div>
       <div class="status-item" id="date-status">—</div>
-      <button class="btn" id="btn-refresh" title="Aggiorna prezzi e ricalcola">↻ Refresh</button>
-      <button class="btn" id="btn-settings" title="Configura API key e prezzi manuali">⚙︎ Settings</button>
+      <button class="btn" id="btn-refresh" title="Aggiorna prezzi e ricalcola" aria-label="Refresh dati">↻ Refresh</button>
+      <button class="btn" id="btn-settings" title="Configura prezzi manuali" aria-label="Apri settings">⚙︎ Settings</button>
     </div>
   </div>
 </header>
 
-<!-- =================================================================== -->
-<!-- MAIN                                                                  -->
-<!-- =================================================================== -->
 <main class="app-main">
 <div class="container">
 
-<!-- ─────────────────────────────────────────────────────────────────── -->
-<!-- SECTION 1 — STRATEGY OF THE MONTH (HERO)                              -->
-<!-- ─────────────────────────────────────────────────────────────────── -->
+<!-- SECTION 1 — STRATEGY -->
 <section class="section">
   <div class="section-header">
     <div>
@@ -57,8 +49,6 @@
 
   <div class="hero-card tier-0" id="hero-card">
     <div class="hero-grid">
-
-      <!-- LEFT: Headline + razionale + amounts -->
       <div>
         <div class="hero-eyebrow">
           <span class="tier-badge tier-0" id="hero-eyebrow-tier">NORMAL</span>
@@ -70,7 +60,7 @@
         </div>
 
         <p class="hero-rationale" id="hero-rationale">
-          In attesa di dati di prezzo storici. Inserisci una API key Twelve Data nelle Settings per attivare l'engine.
+          In attesa di dati di prezzo storici.
         </p>
 
         <div class="hero-amounts">
@@ -99,7 +89,6 @@
         </button>
       </div>
 
-      <!-- RIGHT: Stats grid -->
       <div class="hero-stats">
         <div class="stat-block">
           <div class="stat-label">Drawdown 12M <span class="muted">global</span></div>
@@ -142,14 +131,11 @@
           <div class="stat-trend">cap annuale</div>
         </div>
       </div>
-
     </div>
   </div>
 </section>
 
-<!-- ─────────────────────────────────────────────────────────────────── -->
-<!-- SECTION 2 — PORTFOLIO TRACKER                                         -->
-<!-- ─────────────────────────────────────────────────────────────────── -->
+<!-- SECTION 2 — TRACKER -->
 <section class="section">
   <div class="section-header">
     <div>
@@ -160,8 +146,6 @@
   </div>
 
   <div class="tracker-grid">
-
-    <!-- Main: holdings + total -->
     <div class="card">
       <div class="card-header">
         <h3 class="card-title">Posizioni attuali</h3>
@@ -181,25 +165,25 @@
         </div>
       </div>
 
-      <table class="holdings-table">
-        <thead>
-          <tr>
-            <th>ETF</th>
-            <th class="num">Quote</th>
-            <th class="num">PMC</th>
-            <th class="num">Prezzo</th>
-            <th class="num">Valore</th>
-            <th class="num">P/L %</th>
-            <th class="num">Peso</th>
-          </tr>
-        </thead>
-        <tbody id="holdings-tbody"></tbody>
-      </table>
+      <div class="table-wrap">
+        <table class="holdings-table">
+          <thead>
+            <tr>
+              <th>ETF</th>
+              <th class="num">Quote</th>
+              <th class="num">PMC</th>
+              <th class="num">Prezzo</th>
+              <th class="num">Valore</th>
+              <th class="num">P/L %</th>
+              <th class="num">Peso</th>
+            </tr>
+          </thead>
+          <tbody id="holdings-tbody"></tbody>
+        </table>
+      </div>
     </div>
 
-    <!-- Side: drawdown integrato + calendario -->
     <div class="side-panel">
-
       <div class="card">
         <div class="card-header">
           <h3 class="card-title">Risk metrics</h3>
@@ -234,14 +218,11 @@
         </div>
         <div id="calendar-events"></div>
       </div>
-
     </div>
   </div>
 </section>
 
-<!-- ─────────────────────────────────────────────────────────────────── -->
-<!-- SECTION 3 — TREND CHART                                               -->
-<!-- ─────────────────────────────────────────────────────────────────── -->
+<!-- SECTION 3 — TREND -->
 <section class="section">
   <div class="section-header">
     <div>
@@ -258,7 +239,7 @@
     </div>
 
     <div class="chart-wrap">
-      <canvas id="trend-chart"></canvas>
+      <canvas id="trend-chart" aria-label="Grafico proiezione 5 anni"></canvas>
     </div>
 
     <div class="chart-legend">
@@ -286,9 +267,7 @@
   </div>
 </section>
 
-<!-- ─────────────────────────────────────────────────────────────────── -->
-<!-- SECTION 4 — MONTE CARLO                                               -->
-<!-- ─────────────────────────────────────────────────────────────────── -->
+<!-- SECTION 4 — MONTE CARLO -->
 <section class="section">
   <div class="section-header">
     <div>
@@ -300,13 +279,13 @@
 
   <div class="card">
     <div id="mc-status" class="mc-status">
-      <div class="mc-spinner"></div>
+      <div class="mc-spinner" role="progressbar" aria-label="Caricamento Monte Carlo"></div>
       <div id="mc-progress">In attesa di avvio…</div>
       <div class="muted" style="font-size:11px;">Web Worker: ~3-8 secondi a strategia</div>
     </div>
 
     <div id="mc-table-wrap" class="hidden">
-      <div style="overflow-x:auto;">
+      <div class="table-wrap">
         <table class="mc-table">
           <thead>
             <tr>
@@ -326,15 +305,13 @@
       </div>
 
       <div class="chart-wrap" style="margin-top:32px; height:320px;">
-        <canvas id="mc-chart"></canvas>
+        <canvas id="mc-chart" aria-label="Grafico distribuzione Monte Carlo"></canvas>
       </div>
     </div>
   </div>
 </section>
 
-<!-- ─────────────────────────────────────────────────────────────────── -->
-<!-- SECTION 5 — TOOLS (Tax + Real Estate)                                 -->
-<!-- ─────────────────────────────────────────────────────────────────── -->
+<!-- SECTION 5 — TOOLS -->
 <section class="section">
   <div class="section-header">
     <div>
@@ -345,7 +322,6 @@
   </div>
 
   <div class="tools-grid">
-
     <!-- TAX SIMULATOR -->
     <div class="tool-card">
       <div class="card-header">
@@ -354,16 +330,16 @@
       </div>
 
       <div class="field">
-        <label>Importo da vendere (€)</label>
+        <label for="tax-amount">Importo da vendere (€)</label>
         <input type="number" id="tax-amount" step="100" placeholder="es. 25000">
       </div>
       <div class="field-row">
         <div class="field">
-          <label>PMC (€/quota)</label>
+          <label for="tax-cost">PMC (€/quota)</label>
           <input type="number" id="tax-cost" step="0.01" placeholder="es. 110.50">
         </div>
         <div class="field">
-          <label>Prezzo oggi (€/quota)</label>
+          <label for="tax-price">Prezzo oggi (€/quota)</label>
           <input type="number" id="tax-price" step="0.01" placeholder="es. 124.50">
         </div>
       </div>
@@ -380,41 +356,48 @@
         <span class="card-meta">costi Italia · plus 26%</span>
       </div>
 
-      <form id="re-form">
+      <form id="re-form" onsubmit="return false;">
         <div class="field-row">
           <div class="field">
-            <label>Prezzo acquisto (€)</label>
+            <label for="re-purchase">Prezzo acquisto (€)</label>
             <input type="number" id="re-purchase" step="1000" value="100000">
           </div>
           <div class="field">
-            <label>Prezzo vendita (€)</label>
+            <label for="re-sale">Prezzo vendita (€)</label>
             <input type="number" id="re-sale" step="1000" value="150000">
           </div>
         </div>
         <div class="field-row">
           <div class="field">
-            <label>Durata (mesi)</label>
+            <label for="re-duration">Durata (mesi)</label>
             <input type="number" id="re-duration" min="1" max="60" value="6">
           </div>
           <div class="field">
-            <label>Ristrutturazione (€)</label>
+            <label for="re-renovation">Ristrutturazione (€)</label>
             <input type="number" id="re-renovation" step="500" value="0">
           </div>
         </div>
-        <div class="field">
-          <label>Holding cost mensile (€/mese)</label>
-          <input type="number" id="re-holding" step="50" value="200">
-          <div class="field-help">IMU, utenze base, condominio, assicurazione</div>
+        <div class="field-row">
+          <div class="field">
+            <label for="re-cadastral">Valore catastale (€) <span class="muted" style="text-transform:none;">opz.</span></label>
+            <input type="number" id="re-cadastral" step="1000" placeholder="se vuoto, stima 60% prezzo">
+            <div class="field-help">Se omesso: stimato come 60% del prezzo. Trovi il dato reale sulla visura catastale.</div>
+          </div>
+          <div class="field">
+            <label for="re-holding">Holding €/mese</label>
+            <input type="number" id="re-holding" step="50" value="200">
+            <div class="field-help">IMU, condominio, utenze base</div>
+          </div>
         </div>
         <div class="field-row">
           <div class="field">
-            <label style="display:flex;align-items:center;gap:8px;">
-              <input type="checkbox" id="re-firsthome" style="width:auto"> Prima casa (registro 2%)
+            <label class="checkbox-label">
+              <input type="checkbox" id="re-firsthome"> Prima casa (registro 2%)
             </label>
           </div>
           <div class="field">
-            <label style="display:flex;align-items:center;gap:8px;">
-              <input type="checkbox" id="re-newbuilding" style="width:auto"> Da costruttore (IVA 10%)
+            <label class="checkbox-label">
+              <input type="checkbox" id="re-newbuilding"> Da costruttore (IVA)
             </label>
           </div>
         </div>
@@ -426,16 +409,12 @@
 
       <div id="re-stress" style="margin-top:16px;"></div>
     </div>
-
   </div>
 </section>
 
 </div>
 </main>
 
-<!-- =================================================================== -->
-<!-- FOOTER                                                                -->
-<!-- =================================================================== -->
 <footer class="app-footer">
   <div class="container footer-inner">
     <div>© <span id="footer-date">2026</span> · PAC Terminal · Personal use only</div>
@@ -446,46 +425,38 @@
 
 </div> <!-- /app -->
 
-<!-- =================================================================== -->
-<!-- SETTINGS MODAL                                                        -->
-<!-- =================================================================== -->
-<div class="modal-backdrop" id="settings-modal">
+<!-- SETTINGS MODAL -->
+<div class="modal-backdrop" id="settings-modal" role="dialog" aria-labelledby="settings-title" aria-modal="true">
   <div class="modal">
     <div class="modal-header">
-      <h2 class="modal-title">Settings</h2>
-      <button class="modal-close" id="settings-close">×</button>
+      <h2 class="modal-title" id="settings-title">Settings</h2>
+      <button class="modal-close" id="settings-close" aria-label="Chiudi settings">×</button>
     </div>
 
-    <div class="field">
-      <label>Twelve Data API key (free tier)</label>
-      <input type="text" id="api-key-input" placeholder="il tuo API key…">
-      <div class="field-help">
-        Registrati gratis su <a href="https://twelvedata.com/pricing" target="_blank" rel="noopener">twelvedata.com</a>.
-        Free tier: 800 richieste/giorno · 8/min. Sufficiente per uso personale.
-      </div>
+    <div style="margin-bottom:16px;">
+      <h3 style="font-family:var(--font-display);font-size:18px;color:var(--text-bright);margin-bottom:6px;">
+        Aggiornamento prezzi manuale
+      </h3>
+      <p style="font-size:12px;color:var(--text-muted);line-height:1.5;">
+        Inserisci i prezzi correnti dei tuoi ETF dalla pagina justETF (link sotto ogni campo). 
+        Aggiornali una volta al mese prima della verifica della Strategy. 
+        I prezzi manuali hanno priorità su qualsiasi fonte automatica.
+      </p>
     </div>
 
-    <div class="spacer-2"></div>
-
-    <h3 style="font-family:var(--font-display);font-size:16px;color:var(--text-bright);margin-bottom:8px;">
-      Override prezzi manuali
-    </h3>
-    <p style="font-size:11px;color:var(--text-muted);margin-bottom:16px;">
-      Se l'API non risponde o un ticker non è supportato, inserisci il prezzo manualmente.
-      Cancella il valore per tornare alla fonte automatica.
-    </p>
     <div id="manual-prices"></div>
 
-    <div class="spacer-2"></div>
-
-    <div style="display:flex;gap:12px;justify-content:flex-end;border-top:1px solid var(--border-subtle);padding-top:24px;margin-top:16px;">
-      <button class="btn" id="settings-clear">Cancella tutta la cache</button>
-      <button class="btn btn-primary" id="settings-save">Salva</button>
+    <div style="display:flex;gap:12px;justify-content:space-between;border-top:1px solid var(--border-subtle);padding-top:24px;margin-top:16px;flex-wrap:wrap;">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn" id="settings-clear-manual" type="button">Cancella prezzi manuali</button>
+        <button class="btn" id="settings-clear" type="button">Cancella cache</button>
+      </div>
+      <button class="btn btn-primary" id="settings-save" type="button">Salva</button>
     </div>
   </div>
 </div>
 
-<!-- ENTRY POINT (ES module) -->
+<!-- ENTRY POINT -->
 <script type="module" src="src/main.js"></script>
 
 </body>
