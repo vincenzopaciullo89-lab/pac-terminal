@@ -1,6 +1,13 @@
 // =============================================================================
-// STRATEGY ENGINE — Drawdown-Responsive Contribution
+// STRATEGY ENGINE — FINAL
 // =============================================================================
+// Drawdown-Responsive Contribution: ogni mese determina se aumentare il PAC
+// in base al drawdown da rolling 12-month high del global ETF.
+//
+// GARANZIA: ritorna SEMPRE oggetto completo, anche in branch "no data".
+// La UI non crasha mai per campi mancanti.
+// =============================================================================
+
 import { config } from './config.js';
 
 function determineTier(drawdown) {
@@ -47,14 +54,15 @@ export function getBoostStats() {
 }
 
 function generateAllocationNote(tier) {
+  const a = config.allocation;
+  const aShort = a.map(x => x.name.split(' ').slice(0, 2).join(' '));
   if (!tier || tier.tier === 0) {
-    const a = config.allocation;
-    return `Allocazione standard: ${(a[0].weight*100).toFixed(0)}% ${a[0].name.split(' ').slice(0,2).join(' ')}, ${(a[1].weight*100).toFixed(0)}% ${a[1].name.split(' ').slice(0,2).join(' ')}.`;
+    return `Allocazione standard: ${(a[0].weight*100).toFixed(0)}% ${aShort[0]}, ${(a[1].weight*100).toFixed(0)}% ${aShort[1]}.`;
   }
   if (tier.tier >= 2) {
-    return `Allocazione boost: 100% al global ETF. NON sovrappesare il satellite Nasdaq durante drawdown.`;
+    return `Allocazione boost: 100% al global ETF (${aShort[0]}). Non sovrappesare il satellite Nasdaq durante drawdown.`;
   }
-  return `Allocazione boost: 90/10 come target.`;
+  return `Allocazione boost: 90/10 come target standard.`;
 }
 
 function getConfidence(metrics, tier) {
@@ -94,7 +102,7 @@ function getActionItems(tier, capReached, totalAmount) {
 }
 
 /**
- * Genera la "Strategy of the Month" — SEMPRE ritorna oggetto completo
+ * Genera la "Strategy of the Month" — SEMPRE ritorna oggetto completo.
  */
 export function getStrategyOfTheMonth(metrics, portfolio) {
   const baseAmount = config.pac.baseMonthlyAmount;
@@ -102,7 +110,6 @@ export function getStrategyOfTheMonth(metrics, portfolio) {
 
   // Caso: niente metriche → ritorna oggetto COMPLETO con tier 0
   if (!metrics || metrics.dd12M == null) {
-    const tier0 = config.strategyTiers[0];
     return {
       tier: 0,
       tierLabel: 'No Data',
@@ -118,7 +125,7 @@ export function getStrategyOfTheMonth(metrics, portfolio) {
       zScore: null,
       regime: 'normal',
       volRolling: null,
-      rationale: 'Storico prezzi non disponibile (API offline o ticker non supportato). Il PAC base €' + baseAmount + ' è sempre operativo. Per attivare l\'engine drawdown, aggiorna i prezzi manualmente da justETF nelle Settings, oppure attendi che l\'API torni disponibile.',
+      rationale: `Storico prezzi non disponibile (API offline o ticker non supportato). Il PAC base €${baseAmount} è sempre operativo. Per attivare l'engine drawdown, aggiorna i prezzi manualmente da justETF nelle Settings, oppure attendi che l'API torni disponibile.`,
       urgency: 'info',
       warnings: ['ℹ️ Engine drawdown disattivato fino a quando i prezzi storici non sono disponibili.'],
       capReached: false,
