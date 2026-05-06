@@ -163,12 +163,12 @@ function renderHero(strategy) {
   $('#stat-vol').textContent = (strategy.volRolling !== null && strategy.volRolling !== undefined) ? fmt.pct(strategy.volRolling, 1) : '—';
 
   $('#stat-confidence').textContent = strategy.confidence?.toUpperCase() || 'LOW';
-  $('#stat-boosts').textContent = `${strategy.monthsUsed}/${config.pac.capBoostMonthsPerYear}`;
+  $('#stat-boosts').textContent = `${strategy.monthsUsed ?? 0}/${config.pac.capBoostMonthsPerYear}`;
 
   // Action items
   const ul = $('#action-list');
   ul.innerHTML = '';
-  strategy.actionItems.forEach(item => {
+  (strategy.actionItems || []).forEach(item => {
     const li = document.createElement('li');
     li.textContent = item;
     ul.appendChild(li);
@@ -180,7 +180,7 @@ function renderHero(strategy) {
   if (strategy.warnings.length === 0) {
     wDiv.innerHTML = '<div class="warning-item">— Nessun warning attivo</div>';
   } else {
-    strategy.warnings.forEach(w => {
+    (strategy.warnings || []).forEach(w => {
       const d = document.createElement('div');
       d.className = 'warning-item';
       d.textContent = w;
