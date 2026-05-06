@@ -1,14 +1,14 @@
 // =============================================================================
-// PRICE PROVIDER
+// PRICE PROVIDER — Stooq (gratis, no API key, supporta ETF UCITS .MI)
 // =============================================================================
-// Strategia 3-livelli per prezzi ETF UCITS:
-//   1. Cache localStorage (24h)
-//   2. Twelve Data API (free tier 800 req/giorno, supporta UCITS)
-//   3. Fallback manuale (utente inserisce prezzo)
+// Strategia 3-livelli:
+//   1. Manual override (sempre vince - utente conosce meglio)
+//   2. Cache localStorage (24h)
+//   3. Stooq CSV fetch (free, no key, supporta Borsa Italiana)
 //
-// LIMITE ONESTO: i feed API gratuiti per ETF UCITS irlandesi sono incostanti.
-// Twelve Data è il più affidabile free, MA potrebbe non avere alcuni ticker.
-// Per questo motivo c'è SEMPRE il fallback manuale.
+// Stooq URL pattern: https://stooq.com/q/l/?s=TICKER&f=sd2t2ohlcv&h&e=csv
+// Per Borsa Italiana il ticker su Stooq è in lowercase con .it suffix
+// Es: VWCE.MI → vwce.it ; CSNDX.MI → csndx.it
 // =============================================================================
 
 import { config } from './config.js';
@@ -17,8 +17,17 @@ const CACHE_KEY = 'pd_prices_v1';
 const CACHE_TIMESTAMP_KEY = 'pd_prices_ts_v1';
 const MANUAL_OVERRIDE_KEY = 'pd_manual_prices_v1';
 
+// Mapping ticker config → ticker Stooq
+const STOOQ_MAP = {
+  'VWCE.MI': 'vwce.it',
+  'CSNDX.MI': 'csndx.it',
+  'CSPX.MI': 'cspx.it',
+  'SWDA.MI': 'swda.it',
+  'VETA.MI': 'veta.it',
+};
+
 // -------------------------------------------------------------------------
-// CACHE LAYER
+// CACHE
 // -------------------------------------------------------------------------
 function getCachedPrices() {
   try {
@@ -29,7 +38,6 @@ function getCachedPrices() {
     const data = localStorage.getItem(CACHE_KEY);
     return data ? JSON.parse(data) : null;
   } catch (e) {
-    console.warn('Cache read error:', e);
     return null;
   }
 }
@@ -38,9 +46,7 @@ function setCachedPrices(prices) {
   try {
     localStorage.setItem(CACHE_KEY, JSON.stringify(prices));
     localStorage.setItem(CACHE_TIMESTAMP_KEY, String(Date.now()));
-  } catch (e) {
-    console.warn('Cache write error:', e);
-  }
+  } catch (e) {}
 }
 
 export function getCacheAgeHours() {
@@ -50,7 +56,7 @@ export function getCacheAgeHours() {
 }
 
 // -------------------------------------------------------------------------
-// MANUAL OVERRIDES (utente inserisce manualmente)
+// MANUAL OVERRIDES
 // -------------------------------------------------------------------------
 export function setManualPrice(ticker, price) {
   try {
@@ -58,18 +64,12 @@ export function setManualPrice(ticker, price) {
     overrides[ticker] = { price: parseFloat(price), ts: Date.now() };
     localStorage.setItem(MANUAL_OVERRIDE_KEY, JSON.stringify(overrides));
     return true;
-  } catch (e) {
-    console.error('Manual override error:', e);
-    return false;
-  }
+  } catch (e) { return false; }
 }
 
 export function getManualPrices() {
-  try {
-    return JSON.parse(localStorage.getItem(MANUAL_OVERRIDE_KEY) || '{}');
-  } catch (e) {
-    return {};
-  }
+  try { return JSON.parse(localStorage.getItem(MANUAL_OVERRIDE_KEY) || '{}'); }
+  catch (e) { return {}; }
 }
 
 export function clearManualPrices() {
@@ -77,38 +77,73 @@ export function clearManualPrices() {
 }
 
 // -------------------------------------------------------------------------
-// TWELVE DATA API
+// STOOQ FETCH
 // -------------------------------------------------------------------------
-async function fetchFromTwelveData(ticker, apiKey) {
-  if (!apiKey) throw new Error('API key mancante');
-  const url = `https://api.twelvedata.com/quote?symbol=${encodeURIComponent(ticker)}&apikey=${apiKey}`;
+async function fetchFromStooq(ticker) {
+  const stooqTicker = STOOQ_MAP[ticker] || ticker.toLowerCase().replace('.mi', '.it');
+  const url = `https://stooq.com/q/l/?s=${stooqTicker}&f=sd2t2ohlcv&h&e=csv`;
+  
   const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const data = await res.json();
-  if (data.status === 'error') throw new Error(data.message || 'API error');
-  if (!data.close) throw new Error('Prezzo non disponibile');
+  if (!res.ok) throw new Error(`Stooq HTTP ${res.status}`);
+  
+  const csv = await res.text();
+  const lines = csv.trim().split('\n');
+  if (lines.length < 2) throw new Error('Stooq: risposta vuota');
+  
+  // Header: Symbol,Date,Time,Open,High,Low,Close,Volume
+  const headers = lines[0].split(',');
+  const values = lines[1].split(',');
+  const closeIdx = headers.indexOf('Close');
+  const openIdx = headers.indexOf('Open');
+  const highIdx = headers.indexOf('High');
+  const lowIdx = headers.indexOf('Low');
+  
+  const close = parseFloat(values[closeIdx]);
+  if (isNaN(close) || close <= 0) {
+    throw new Error(`Stooq: ticker ${stooqTicker} non disponibile (forse N/D oggi)`);
+  }
+  
+  const open = parseFloat(values[openIdx]);
+  const changePct = open > 0 ? ((close - open) / open) * 100 : 0;
+  
   return {
-    price: parseFloat(data.close),
-    previousClose: parseFloat(data.previous_close || data.close),
-    changePct: parseFloat(data.percent_change || 0),
-    high52w: parseFloat(data.fifty_two_week?.high || 0),
-    low52w: parseFloat(data.fifty_two_week?.low || 0),
+    price: close,
+    previousClose: open,
+    changePct,
+    high52w: parseFloat(values[highIdx]) || close,
+    low52w: parseFloat(values[lowIdx]) || close,
     timestamp: Date.now(),
   };
 }
 
-// Storico ultimi N giorni per calcolo MA, drawdown rolling
-async function fetchHistoricalFromTwelveData(ticker, apiKey, daysBack = 252) {
-  if (!apiKey) throw new Error('API key mancante');
-  const url = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(ticker)}&interval=1day&outputsize=${daysBack}&apikey=${apiKey}`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const data = await res.json();
-  if (data.status === 'error') throw new Error(data.message);
-  if (!Array.isArray(data.values)) throw new Error('Dati storici malformati');
-  return data.values
-    .map(d => ({ date: d.datetime, close: parseFloat(d.close) }))
-    .reverse(); // dal più vecchio al più recente
+// Storico prezzi (per drawdown 12M, MA200 ecc.)
+async function fetchHistoricalFromStooq(ticker) {
+  const stooqTicker = STOOQ_MAP[ticker] || ticker.toLowerCase().replace('.mi', '.it');
+  // i=d daily, ottiene fino a ~5 anni di storico
+  const url = `https://stooq.com/q/d/l/?s=${stooqTicker}&i=d`;
+  
+  const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+  if (!res.ok) throw new Error(`Stooq history HTTP ${res.status}`);
+  
+  const csv = await res.text();
+  const lines = csv.trim().split('\n');
+  if (lines.length < 50) throw new Error('Stooq: storico insufficiente');
+  
+  const headers = lines[0].split(',');
+  const dateIdx = headers.indexOf('Date');
+  const closeIdx = headers.indexOf('Close');
+  
+  const data = [];
+  for (let i = 1; i < lines.length; i++) {
+    const parts = lines[i].split(',');
+    const close = parseFloat(parts[closeIdx]);
+    if (!isNaN(close) && close > 0) {
+      data.push({ date: parts[dateIdx], close });
+    }
+  }
+  
+  // Stooq restituisce dal più vecchio al più recente, già OK
+  return data;
 }
 
 // -------------------------------------------------------------------------
@@ -117,7 +152,7 @@ async function fetchHistoricalFromTwelveData(ticker, apiKey, daysBack = 252) {
 export async function getPriceFor(ticker, opts = {}) {
   const { forceRefresh = false, useCache = true } = opts;
 
-  // 1. Manual override sempre vince (l'utente conosce meglio)
+  // 1. Manual override
   const manuals = getManualPrices();
   if (manuals[ticker]) {
     return {
@@ -136,15 +171,15 @@ export async function getPriceFor(ticker, opts = {}) {
     }
   }
 
-  // 3. Fetch live
-  const apiKey = localStorage.getItem('twelvedata_apikey') || config.priceProvider.apiKey;
+  // 3. Stooq live
   try {
-    const live = await fetchFromTwelveData(ticker, apiKey);
+    const live = await fetchFromStooq(ticker);
     const cache = getCachedPrices() || {};
     cache[ticker] = live;
     setCachedPrices(cache);
-    return { ticker, ...live, source: 'live' };
+    return { ticker, ...live, source: 'live-stooq' };
   } catch (err) {
+    console.warn(`[Stooq] ${ticker}: ${err.message}`);
     return { ticker, price: null, source: 'error', error: err.message };
   }
 }
@@ -159,27 +194,23 @@ export async function getAllPrices(forceRefresh = false) {
 }
 
 export async function getHistoricalPrices(ticker, daysBack = 252) {
-  const apiKey = localStorage.getItem('twelvedata_apikey') || config.priceProvider.apiKey;
-  if (!apiKey) {
-    return { ticker, data: null, source: 'no-api-key' };
-  }
   try {
-    const data = await fetchHistoricalFromTwelveData(ticker, apiKey, daysBack);
-    return { ticker, data, source: 'live' };
+    const fullData = await fetchHistoricalFromStooq(ticker);
+    // Restituisce solo gli ultimi N giorni
+    return { ticker, data: fullData.slice(-daysBack), source: 'live-stooq' };
   } catch (err) {
+    console.warn(`[Stooq history] ${ticker}: ${err.message}`);
     return { ticker, data: null, source: 'error', error: err.message };
   }
 }
 
-// Setting per API key (chiamato dalla UI Settings)
+// Stub functions per compatibilità con UI vecchia (non usate ma evitano import errors)
 export function setApiKey(key) {
   localStorage.setItem('twelvedata_apikey', key.trim());
 }
-
 export function getApiKey() {
   return localStorage.getItem('twelvedata_apikey') || '';
 }
-
 export function clearAllCache() {
   localStorage.removeItem(CACHE_KEY);
   localStorage.removeItem(CACHE_TIMESTAMP_KEY);
