@@ -217,7 +217,7 @@ function renderTracker(portfolio) {
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td class="label">
-        ${h.name.split(' ').slice(0, 4).join(' ')}
+        ${h.name.split(' ').slice(0, 4).join(' ')}${h.isLegacy ? ' <span style="font-size:9px;padding:1px 6px;background:rgba(124,154,167,0.2);color:var(--text-muted);border-radius:3px;letter-spacing:0.05em;text-transform:uppercase;margin-left:4px;">LEGACY</span>' : ''}
         <small>${h.ticker} · ${h.isin}</small>
       </td>
       <td class="num">${fmt.num(h.units, 4)}</td>
