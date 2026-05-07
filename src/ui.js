@@ -443,6 +443,74 @@ function _ensureProbCanvasUnused() {
 }
 
 // -------------------------------------------------------------------------
+// SETTINGS MODAL
+// -------------------------------------------------------------------------
+function setupSettings() {
+  const modal = $('#settings-modal');
+  if (!modal) return;
+  const open = () => {
+    modal.classList.add('show');
+    populateManualPrices();
+  };
+  const close = () => modal.classList.remove('show');
+
+  $('#btn-settings')?.addEventListener('click', open);
+  $('#settings-close')?.addEventListener('click', close);
+  modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal.classList.contains('show')) close();
+  });
+
+  function populateManualPrices() {
+    const wrap = $('#manual-prices');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+    const manuals = getManualPrices();
+    config.allocation.forEach((alloc) => {
+      const existing = manuals[alloc.ticker];
+      const age = getManualPriceAge(alloc.ticker);
+      const ageNote = age !== null ? ` <span class="muted">· aggiornato ${age}h fa</span>` : '';
+      const div = document.createElement('div');
+      div.className = 'field';
+      div.innerHTML = `
+        <label>${alloc.name}${ageNote}</label>
+        <input type="number" step="0.01" id="manual-${alloc.id}" placeholder="es. 131.50" value="${existing?.price ?? ''}" aria-label="Prezzo manuale ${alloc.ticker}">
+        <div class="field-help">Ticker: ${alloc.ticker} · Trova il prezzo attuale su <a href="https://www.justetf.com/it/etf-profile.html?isin=${alloc.isin}" target="_blank" rel="noopener">justETF</a></div>
+      `;
+      wrap.appendChild(div);
+    });
+  }
+
+  $('#settings-save')?.addEventListener('click', () => {
+    config.allocation.forEach(alloc => {
+      const el = document.getElementById(`manual-${alloc.id}`);
+      if (!el) return;
+      const v = parseFloat(el.value);
+      if (v > 0) setManualPrice(alloc.ticker, v);
+    });
+    close();
+    refresh(true);
+  });
+
+  $('#settings-clear-manual')?.addEventListener('click', () => {
+    if (confirm('Cancellare tutti i prezzi manuali? Tornerà ai fallback statici.')) {
+      clearManualPrices();
+      populateManualPrices();
+      refresh(true);
+    }
+  });
+
+  $('#settings-clear')?.addEventListener('click', () => {
+    if (confirm('Cancellare cache prezzi e Monte Carlo? (i prezzi manuali restano)')) {
+      clearAllCache();
+      _CMC();
+      location.reload();
+    }
+  });
+}
+
+// -------------------------------------------------------------------------
 // TAX SIMULATOR
 // -------------------------------------------------------------------------
 function setupBoostButton() {
