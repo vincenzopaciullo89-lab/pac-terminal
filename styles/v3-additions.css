@@ -327,42 +327,64 @@
   .nav-link { padding: 10px 10px; font-size: 11px; letter-spacing: 0.4px; }
   .horizon-btn { padding: 10px 12px; font-size: 11px; }
 
-  /* HEADER — stack verticale, nav e status in righe dedicate */
+  /* HEADER — stack verticale con layout rigido a grid */
   .app-header { padding: var(--space-3, 12px) 0; }
   .header-inner {
     flex-direction: column;
     align-items: stretch;
-    gap: var(--space-3, 12px);
+    gap: 10px;
   }
   .brand {
+    display: flex;
     justify-content: center;
-    flex-wrap: wrap;
-    gap: var(--space-2, 8px);
+    align-items: baseline;
+    text-align: center;
+    min-width: 0;
   }
   .brand-mark { font-size: 18px; }
-  .brand-tagline { font-size: 10px; }
+  .brand-tagline { display: none; }
 
+  /* NAV: grid a 3 colonne uguali, garantisce visibilità di tutti i link */
   .header-nav {
-    margin-left: 0;
-    justify-content: stretch;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
     gap: 4px;
+    margin-left: 0;
     border-top: 1px solid var(--border-subtle, #1A3A47);
     border-bottom: 1px solid var(--border-subtle, #1A3A47);
     padding: 6px 0;
   }
   .header-nav .nav-link {
-    flex: 1;
     text-align: center;
+    padding: 10px 4px;
+    font-size: 10.5px;
+    letter-spacing: 0.3px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
+  /* STATUS: grid 2 colonne, status-item su riga 1, btn su riga 2 */
   .header-status {
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: var(--space-2, 8px);
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
     font-size: 10px;
   }
-  .header-status .status-item { font-size: 10px; flex: 1 1 auto; }
-  .header-status .btn { flex: 1; min-width: 0; justify-content: center; }
+  .header-status .status-item {
+    font-size: 10px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .header-status .btn {
+    width: 100%;
+    justify-content: center;
+    padding: 10px 8px;
+    font-size: 11px;
+  }
 
   /* TERMINAL BAR — scroll orizzontale, una riga sola (estetica terminale) */
   .terminal-bar { padding: 6px 0; }
@@ -471,9 +493,10 @@
   .stat-hero-value { font-size: 30px; }
   .section-title { font-size: 19px; }
   .modal-title { font-size: 18px; }
-  .brand-tagline { display: none; }
-  .header-status .status-item .status-text { display: none; }
-  .header-status .status-item .status-dot { width: 8px; height: 8px; }
+  .brand-mark { font-size: 17px; }
+  .header-nav .nav-link { font-size: 10px; padding: 9px 2px; letter-spacing: 0.2px; }
+  .header-status .status-item .status-text { font-size: 9.5px; }
+  .header-status .btn { padding: 9px 6px; font-size: 10.5px; }
   .holdings-table th,
   .holdings-table td,
   .mc-table th,
