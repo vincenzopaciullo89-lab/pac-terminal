@@ -245,7 +245,6 @@ function renderHero(strategy) {
   safeSetText('#hero-eyebrow-tier', strategy.tierLabel || '—');
   const eyebrowBadge = $('#hero-eyebrow-tier');
   if (eyebrowBadge) eyebrowBadge.className = `tier-badge tier-${strategy.tier}`;
-  safeSetText('#hero-eyebrow-date', fmt.date(new Date()).toUpperCase());
 
   let headline;
   if (strategy.tier === 0) {
@@ -269,26 +268,6 @@ function renderHero(strategy) {
   $('#amount-extra').className = `amount-value ${strategy.extraAmount > 0 ? 'positive' : ''}`;
   $('#amount-total').textContent = fmt.eur(strategy.totalAmount);
   $('#amount-total').className = `amount-value ${strategy.tier > 0 && !strategy.capReached ? 'positive' : ''}`;
-
-  // Stats — TUTTI con isNum check defensivo
-  safeSetText('#stat-dd12m', isNum(strategy.drawdown) ? fmt.pct(strategy.drawdown) : '—');
-  safeSetClass('#stat-dd12m', `stat-value ${isNum(strategy.drawdown) && strategy.drawdown < -0.05 ? 'negative' : 'positive'}`);
-
-  safeSetText('#stat-ddath', isNum(strategy.drawdownATH) ? fmt.pct(strategy.drawdownATH) : '—');
-  safeSetClass('#stat-ddath', `stat-value ${isNum(strategy.drawdownATH) && strategy.drawdownATH < -0.05 ? 'negative' : 'positive'}`);
-
-  safeSetText('#stat-mad', isNum(strategy.madMA200) ? fmt.pct(strategy.madMA200) : '—');
-  safeSetClass('#stat-mad', `stat-value ${isNum(strategy.madMA200) && strategy.madMA200 < 0 ? 'negative' : 'positive'}`);
-
-  safeSetText('#stat-zscore', isNum(strategy.zScore) ? strategy.zScore.toFixed(2) : '—');
-
-  const regime = strategy.regime || 'normal';
-  safeSetHTML('#stat-regime', `<span class="regime-pill ${regime}">${regime}</span>`);
-
-  safeSetText('#stat-vol', isNum(strategy.volRolling) ? fmt.pct(strategy.volRolling, 1) : '—');
-
-  safeSetText('#stat-confidence', (strategy.confidence || 'low').toUpperCase());
-  safeSetText('#stat-boosts', `${strategy.monthsUsed ?? 0}/${config.pac.capBoostMonthsPerYear}`);
 
   // Action items (defensive)
   const ul = $('#action-list');
@@ -317,8 +296,6 @@ function renderHero(strategy) {
       });
     }
   }
-
-  safeSetText('#allocation-note', strategy.allocationNote || '');
 }
 
 // -------------------------------------------------------------------------
@@ -530,6 +507,29 @@ function setupBoostButton() {
       refresh();
     }
   });
+}
+
+// -------------------------------------------------------------------------
+// BOOST HISTORY
+// -------------------------------------------------------------------------
+function renderBoostHistory() {
+  const box = $('#boost-history');
+  if (!box) return;
+  const stats = getBoostStats();
+  if (!stats || stats.monthsUsed === 0) {
+    box.innerHTML = '<span class="muted small">Nessun boost registrato in YTD</span>';
+    return;
+  }
+  box.innerHTML = `
+    <div class="boost-entry">
+      <span>Boost YTD</span>
+      <strong>${stats.monthsUsed}/${config.pac.capBoostMonthsPerYear}</strong>
+    </div>
+    <div class="boost-entry">
+      <span>Extra versato</span>
+      <strong>${fmt.eur(stats.totalExtra)}</strong>
+    </div>
+  `;
 }
 
 // -------------------------------------------------------------------------
