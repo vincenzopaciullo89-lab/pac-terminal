@@ -2,11 +2,9 @@ name: Drawdown Alert
 
 on:
   schedule:
-    # Ogni giorno alle 06:30 UTC = 07:30 italiano (08:30 con ora legale)
-    # NB: GitHub a volte ritarda i cron di 5-30 min, è normale
+    # Ogni giorno alle 06:30 UTC (07:30 CET / 08:30 CEST)
     - cron: '30 6 * * *'
 
-  # Permette esecuzione manuale dal tab Actions
   workflow_dispatch:
 
 jobs:
@@ -24,8 +22,9 @@ jobs:
 
       - name: Run drawdown check
         env:
+          SHEET_HISTORY_URL: ${{ secrets.SHEET_HISTORY_URL }}
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
-          ALERT_THRESHOLD: '-0.05'  # -5% DD12M
+          ALERT_THRESHOLD: '-0.05'
         run: python scripts/drawdown_alert.py
