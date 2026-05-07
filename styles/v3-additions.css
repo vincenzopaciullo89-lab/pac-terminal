@@ -309,3 +309,175 @@
 
 /* Helper class */
 .small { font-size: 10px; }
+
+/* =============================================================================
+   MOBILE RESPONSIVENESS (v3.1)
+   ============================================================================= */
+
+@media (max-width: 768px) {
+  /* Layout & spacing più stretto */
+  .container { padding: 0 var(--space-4, 16px); }
+  .app-main { padding: var(--space-5, 20px) 0 var(--space-8, 32px); }
+  .section { margin-bottom: var(--space-8, 32px); }
+  .card { padding: var(--space-4, 16px); }
+  .card-header { margin-bottom: var(--space-4, 16px); }
+
+  /* Tap targets ≥ 44px */
+  .btn { padding: 11px 14px; font-size: 12px; }
+  .nav-link { padding: 10px 10px; font-size: 11px; letter-spacing: 0.4px; }
+  .horizon-btn { padding: 10px 12px; font-size: 11px; }
+
+  /* HEADER — stack verticale, nav e status in righe dedicate */
+  .app-header { padding: var(--space-3, 12px) 0; }
+  .header-inner {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-3, 12px);
+  }
+  .brand {
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: var(--space-2, 8px);
+  }
+  .brand-mark { font-size: 18px; }
+  .brand-tagline { font-size: 10px; }
+
+  .header-nav {
+    margin-left: 0;
+    justify-content: stretch;
+    gap: 4px;
+    border-top: 1px solid var(--border-subtle, #1A3A47);
+    border-bottom: 1px solid var(--border-subtle, #1A3A47);
+    padding: 6px 0;
+  }
+  .header-nav .nav-link {
+    flex: 1;
+    text-align: center;
+  }
+
+  .header-status {
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--space-2, 8px);
+    font-size: 10px;
+  }
+  .header-status .status-item { font-size: 10px; flex: 1 1 auto; }
+  .header-status .btn { flex: 1; min-width: 0; justify-content: center; }
+
+  /* TERMINAL BAR — scroll orizzontale, una riga sola (estetica terminale) */
+  .terminal-bar { padding: 6px 0; }
+  .terminal-inner {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    gap: 14px;
+    padding-bottom: 2px;
+  }
+  .terminal-inner::-webkit-scrollbar { display: none; }
+
+  /* SECTION HEADER + CONTROLS */
+  .section-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-3, 12px);
+  }
+  .section-title { font-size: 22px; }
+  .section-num { font-size: 10px; }
+  .section-controls {
+    width: 100%;
+    gap: var(--space-3, 12px);
+  }
+  .toggle-inline { font-size: 9px; }
+  .horizon-toggle { width: 100%; }
+  .horizon-btn { flex: 1; padding: 9px 6px; }
+
+  /* STAT HERO — meta in riga verticale-friendly */
+  .stat-hero { padding-bottom: var(--space-4, 16px); margin-bottom: var(--space-4, 16px); }
+  .stat-hero-value { font-size: 36px; }
+  .stat-hero-meta {
+    gap: var(--space-3, 12px);
+    font-size: 11px;
+  }
+
+  /* LATENT TAX BANNER — stack verticale, niente separatori orfani */
+  .latent-tax-banner {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    font-size: 11px;
+    padding: 10px 12px;
+  }
+  .latent-tax-banner .separator { display: none; }
+
+  /* HOLDINGS / MC TABLE — denser, scroll orizzontale già in .table-wrap */
+  .holdings-table th,
+  .holdings-table td { padding: 9px 6px; font-size: 11px; }
+  .holdings-table td.label { font-size: 12px; }
+  .mc-table th,
+  .mc-table td { padding: 9px 6px; font-size: 11px; }
+
+  /* HERO COMPACT */
+  .hero-headline-compact { font-size: 16px; margin: 10px 0 4px; }
+  .hero-card-compact .hero-rationale { font-size: 12px; margin-bottom: 12px; }
+  .amounts-row { gap: 6px; }
+  .amount-pill { padding: 6px 8px; font-size: 11px; }
+  .amount-pill .muted { font-size: 9px; }
+  .action-btn { width: 100%; justify-content: center; }
+
+  /* TREND SUMMARY */
+  .trend-summary {
+    gap: var(--space-3, 12px);
+    padding: 10px 12px;
+    font-size: 10px;
+  }
+  .trend-summary-item .value { font-size: 12px; }
+
+  /* CHART aspect ratio adattato (override inline height) */
+  .chart-wrap[style] { height: 320px !important; }
+
+  /* TOOLS LINK CARDS */
+  .tool-link-card { padding: 18px 16px; }
+  .tool-link-title { font-size: 17px; padding-right: 36px; }
+  .tool-link-desc { font-size: 12px; }
+  .tool-link-num { top: 14px; right: 16px; font-size: 20px; }
+
+  /* MODALS — padding ridotto e top-aligned */
+  .modal-backdrop {
+    padding: var(--space-3, 12px);
+    align-items: flex-start;
+    padding-top: var(--space-5, 20px);
+  }
+  .modal {
+    padding: var(--space-5, 20px);
+    border-radius: var(--radius, 8px);
+    max-height: 90vh;
+  }
+  .modal-title { font-size: 20px; }
+
+  /* FOOTER */
+  .footer-inner {
+    flex-direction: column;
+    text-align: center;
+    gap: var(--space-2, 8px);
+  }
+
+  /* Riduce padding sui card max-width inline (tax/realestate) */
+  .card[style*="max-width"] { max-width: 100% !important; }
+}
+
+/* Extra-small phones (≤ 420px) */
+@media (max-width: 420px) {
+  .stat-hero-value { font-size: 30px; }
+  .section-title { font-size: 19px; }
+  .modal-title { font-size: 18px; }
+  .brand-tagline { display: none; }
+  .header-status .status-item .status-text { display: none; }
+  .header-status .status-item .status-dot { width: 8px; height: 8px; }
+  .holdings-table th,
+  .holdings-table td,
+  .mc-table th,
+  .mc-table td { padding: 8px 5px; font-size: 10.5px; }
+  .chart-wrap[style] { height: 280px !important; }
+  .latent-tax-banner { font-size: 10.5px; }
+}
