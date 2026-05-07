@@ -1,11 +1,14 @@
 // =============================================================================
-// PORTFOLIO ENGINE — FINAL
+// PORTFOLIO ENGINE v2 — FIX LEGACY PRICE LOOKUP
 // =============================================================================
-// Calcola lo stato corrente del portafoglio: valore, P/L, allocazioni effettive.
-// Lavora con TUTTE le posizioni in initialHoldings (target + legacy).
+// FIX vs v1:
+//   - Anche le posizioni LEGACY (CSPX, SWDA, VETA non in allocation target)
+//     ricevono i prezzi correnti dal Sheet via mapping ISIN→ticker.
+//   - Importa getTickerForISIN da priceProvider per coerenza.
 // =============================================================================
 
 import { config } from './config.js';
+import { getTickerForISIN } from './priceProvider.js';
 
 export function computeHolding(allocItem, holding, currentPrice) {
   const units = holding?.units || 0;
@@ -35,8 +38,10 @@ export function computeHolding(allocItem, holding, currentPrice) {
 
 /**
  * Stato completo del portafoglio.
- * Include TUTTE le posizioni in initialHoldings, anche quelle legacy
- * (PAC interrotti, non più nell'allocation target).
+ * Include TUTTE le posizioni in initialHoldings, anche quelle legacy.
+ *
+ * BUG FIX v2: per i legacy, ora cerchiamo i prezzi nel `prices` dict
+ * usando il ticker ricavato da ISIN (es. IE00B5BMR087 → CSPX.MI).
  */
 export function computePortfolio(prices) {
   const allocByISIN = new Map();
@@ -44,24 +49,23 @@ export function computePortfolio(prices) {
 
   const holdings = (config.initialHoldings || []).map((holding) => {
     const alloc = allocByISIN.get(holding.isin);
-
-    // Posizione target → usa allocation come metadata
-    // Posizione legacy → costruisci placeholder con role 'legacy'
     const isLegacy = !alloc;
+
     let allocItem;
     if (alloc) {
       allocItem = alloc;
     } else {
-      // Estrai un nome leggibile dalla nota se presente
+      // Legacy: costruiamo metadata e mappiamo ISIN al ticker .MI
       let derivedName = `Legacy ${holding.isin.slice(-6)}`;
       if (holding._note) {
         const colonIdx = holding._note.indexOf(':');
         if (colonIdx > 0) derivedName = holding._note.slice(0, colonIdx).trim();
       }
+      const legacyTicker = getTickerForISIN(holding.isin) || holding.isin;
       allocItem = {
         id: 'legacy-' + holding.isin.slice(-4).toLowerCase(),
         name: derivedName,
-        ticker: holding.isin,
+        ticker: legacyTicker,
         isin: holding.isin,
         weight: 0,
         role: 'legacy',
@@ -69,7 +73,9 @@ export function computePortfolio(prices) {
       };
     }
 
-    const priceData = alloc ? prices[alloc.ticker] : null;
+    // FIX v2: cerchiamo il prezzo SEMPRE in `prices`, sia per allocation che per legacy
+    // Il ticker corretto è in allocItem.ticker (mappato per i legacy)
+    const priceData = prices[allocItem.ticker] || null;
     const price = priceData?.price ?? holding?.currentPriceFallback ?? 0;
 
     const computed = computeHolding(allocItem, holding, price);
