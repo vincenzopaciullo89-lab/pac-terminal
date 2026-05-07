@@ -1,8 +1,11 @@
 // =============================================================================
-// MONTE CARLO WORKER — FINAL
+// MONTE CARLO WORKER v3 — feedback Vincenzo
 // =============================================================================
-// 50.000 simulazioni in Web Worker. UI non si freeza.
-// Vettorizzato su Float64Array per performance.
+// Modifiche v3:
+//   - SOLO strategia "PAC tactical" (utente non userà costanti come confronto)
+//   - pacSchedule: array [{startMonth, amount}] per cambi nel tempo
+//   - horizonMonths variabile (5/10/20 anni)
+//   - probCurve a step €25k per line chart probabilità
 // =============================================================================
 
 self.onmessage = function (e) {
@@ -31,42 +34,16 @@ function gaussian(rng) {
   return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
 }
 
-function simulateConstantPAC(params, monthlyPAC, seed) {
-  const { nSim, months, mu, sigma, ter, pv0 } = params;
-  const muLog = Math.log(1 + mu) / 12 - 0.5 * Math.pow(sigma / Math.sqrt(12), 2);
-  const sigmaM = sigma / Math.sqrt(12);
-  const terM = ter / 12;
-
-  const finalValues = new Float64Array(nSim);
-  const finalDDs = new Float64Array(nSim);
-  const totalContributed = pv0 + monthlyPAC * months;
-
-  const rng = mulberry32(seed);
-
-  for (let s = 0; s < nSim; s++) {
-    let v = pv0;
-    let peak = pv0;
-    let ddMin = 0;
-    for (let m = 0; m < months; m++) {
-      const z = gaussian(rng);
-      const r = Math.exp(muLog + sigmaM * z - terM) - 1;
-      v = (v + monthlyPAC) * (1 + r);
-      if (v > peak) peak = v;
-      const dd = peak > 0 ? (v / peak) - 1 : 0;
-      if (dd < ddMin) ddMin = dd;
-    }
-    finalValues[s] = v;
-    finalDDs[s] = ddMin;
+function pacAt(month, schedule) {
+  let amount = schedule[0].amount;
+  for (const seg of schedule) {
+    if (month >= seg.startMonth) amount = seg.amount;
+    else break;
   }
-
-  return {
-    finalValues: Array.from(finalValues),
-    finalDDs: Array.from(finalDDs),
-    totalContributed,
-  };
+  return amount;
 }
 
-function simulateTacticalPAC(params, monthlyPAC, seed) {
+function simulateTacticalPAC(params, pacSchedule, seed) {
   const { nSim, months, mu, sigma, ter, pv0, capPerYear, tiers } = params;
   const muLog = Math.log(1 + mu) / 12 - 0.5 * Math.pow(sigma / Math.sqrt(12), 2);
   const sigmaM = sigma / Math.sqrt(12);
@@ -111,7 +88,8 @@ function simulateTacticalPAC(params, monthlyPAC, seed) {
         if (multiplier > 1.0) boostThisYear++;
       }
 
-      const contrib = monthlyPAC * multiplier;
+      const monthlyPACAtM = pacAt(m, pacSchedule);
+      const contrib = monthlyPACAtM * multiplier;
       totalC += contrib;
 
       const z = gaussian(rng);
@@ -133,7 +111,6 @@ function simulateTacticalPAC(params, monthlyPAC, seed) {
     finalValues: Array.from(finalValues),
     finalDDs: Array.from(finalDDs),
     totalContributedArr: Array.from(totalContributedArr),
-    totalContributed: null,
   };
 }
 
@@ -156,7 +133,7 @@ function computeStats(values, contributed) {
     p75: sorted[Math.floor(0.75 * sorted.length)],
     p95: sorted[Math.floor(0.95 * sorted.length)],
     mean: mean(values),
-    contributed: typeof contributed === 'number' ? contributed : mean(contributed || values.map(_ => 0)),
+    contributed: typeof contributed === 'number' ? contributed : mean(contributed),
   };
 }
 
@@ -168,25 +145,53 @@ function probDDBelow(dds, threshold) {
   return dds.filter(d => d <= threshold).length / dds.length;
 }
 
+// Curva probabilità a step €25k tra €100k e €600k → per line chart
+function buildProbabilityCurve(values, minTh, maxTh, step) {
+  const sorted = [...values].sort((a, b) => a - b);
+  const n = sorted.length;
+  const curve = [];
+  for (let th = minTh; th <= maxTh; th += step) {
+    let count = 0;
+    for (let i = sorted.length - 1; i >= 0; i--) {
+      if (sorted[i] >= th) count++;
+      else break;
+    }
+    curve.push({ threshold: th, prob: count / n });
+  }
+  return curve;
+}
+
 function runAllStrategies(params) {
-  const { months, nSim } = params;
+  const { months, nSim, pacSchedule } = params;
   const startTime = Date.now();
 
+  const schedule = (Array.isArray(pacSchedule) && pacSchedule.length > 0)
+    ? [...pacSchedule].sort((a, b) => a.startMonth - b.startMonth)
+    : [{ startMonth: 0, amount: params.monthlyPAC || 500 }];
+
+  const basePAC = schedule[0].amount;
+
+  let labelTactical = `PAC €${basePAC} + tactical`;
+  if (schedule.length > 1) {
+    const segLabels = schedule.map(s => {
+      const yr = (s.startMonth / 12).toFixed(0);
+      return s.startMonth === 0 ? `€${s.amount}` : `${yr}a→€${s.amount}`;
+    });
+    labelTactical = `PAC ${segLabels.join(' / ')} + tactical`;
+  }
+
+  // SOLO strategia tactical (utente ha rifiutato il confronto con costante)
   const strategies = [
-    { id: 'pac500', label: 'PAC €500 costante', fn: () => simulateConstantPAC(params, 500, 42) },
-    { id: 'pac400', label: 'PAC €400 costante', fn: () => simulateConstantPAC(params, 400, 43) },
-    { id: 'pac530', label: 'PAC €530 costante', fn: () => simulateConstantPAC(params, 530, 44) },
-    { id: 'pac500_tactical', label: 'PAC €500 + tactical', fn: () => simulateTacticalPAC(params, 500, 45) },
-    { id: 'pac400_tactical', label: 'PAC €400 + tactical', fn: () => simulateTacticalPAC(params, 400, 46) },
+    { id: 'pac_tactical', label: labelTactical, fn: () => simulateTacticalPAC(params, schedule, 45) },
   ];
 
   const results = strategies.map((strat, i) => {
     self.postMessage({ status: 'progress', current: i, total: strategies.length, label: strat.label });
     const sim = strat.fn();
-    const stats = computeStats(sim.finalValues, sim.totalContributed ?? sim.totalContributedArr);
+    const stats = computeStats(sim.finalValues, sim.totalContributedArr);
     const taxRate = 0.26;
     const grossPlus = sim.finalValues.map((v, j) => {
-      const c = sim.totalContributed ?? (sim.totalContributedArr ? sim.totalContributedArr[j] : 0);
+      const c = sim.totalContributedArr[j];
       return Math.max(0, v - c);
     });
     const netValues = sim.finalValues.map((v, j) => v - grossPlus[j] * taxRate);
@@ -203,15 +208,15 @@ function runAllStrategies(params) {
         above_600k: probAbove(sim.finalValues, 600000),
         above_1m: probAbove(sim.finalValues, 1000000),
       },
+      probCurve: buildProbabilityCurve(sim.finalValues, 100000, 600000, 25000),
       drawdown: {
         median: percentile(sim.finalDDs, 50),
         prob_below_20: probDDBelow(sim.finalDDs, -0.20),
         prob_below_30: probDDBelow(sim.finalDDs, -0.30),
         prob_below_40: probDDBelow(sim.finalDDs, -0.40),
       },
-      contributedMedian: typeof sim.totalContributed === 'number'
-        ? sim.totalContributed
-        : percentile(sim.totalContributedArr, 50),
+      contributedMedian: percentile(sim.totalContributedArr, 50),
+      pacSchedule: schedule,
     };
   });
 
@@ -221,5 +226,6 @@ function runAllStrategies(params) {
     nSim,
     strategies: results,
     horizonYears: months / 12,
+    pacSchedule: schedule,
   };
 }

@@ -7,6 +7,7 @@
 <meta name="description" content="Dashboard PAC ETF — strategia drawdown-responsive, Monte Carlo 50k, IRR immobiliare. Browser-only, zero cloud.">
 <title>PAC Terminal · Strategia ETF</title>
 <link rel="stylesheet" href="styles/styles.css">
+<link rel="stylesheet" href="styles/v3-additions.css">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230A1A20'/%3E%3Ccircle cx='16' cy='16' r='5' fill='%232DD4BF'/%3E%3C/svg%3E">
 
 <!-- Chart.js da CDN -->
@@ -22,6 +23,11 @@
       <span class="brand-mark">PAC <em>Terminal</em></span>
       <span class="brand-tagline">·  Personal Investment Intelligence</span>
     </div>
+    <nav class="header-nav">
+      <a href="index.html" class="nav-link active">Dashboard</a>
+      <a href="tax.html" class="nav-link">Tax</a>
+      <a href="realestate.html" class="nav-link">Real Estate</a>
+    </nav>
     <div class="header-status">
       <div class="status-item" id="api-status">
         <span class="status-dot"></span>
@@ -34,122 +40,41 @@
   </div>
 </header>
 
+<!-- BLOOMBERG-STYLE TICKER BAR — sempre visibile, una riga monospace -->
+<div class="terminal-bar" id="terminal-bar">
+  <div class="container terminal-inner">
+    <div class="terminal-item"><span class="t-label">VWCE</span><span class="t-value" id="tb-vwce">—</span></div>
+    <div class="terminal-sep"></div>
+    <div class="terminal-item"><span class="t-label">DD12M</span><span class="t-value" id="tb-dd12m">—</span></div>
+    <div class="terminal-item"><span class="t-label">DD ATH</span><span class="t-value" id="tb-ddath">—</span></div>
+    <div class="terminal-item"><span class="t-label">MA200</span><span class="t-value" id="tb-ma200">—</span></div>
+    <div class="terminal-item"><span class="t-label">VOL60d</span><span class="t-value" id="tb-vol">—</span></div>
+    <div class="terminal-item"><span class="t-label">Z21d</span><span class="t-value" id="tb-zscore">—</span></div>
+    <div class="terminal-sep"></div>
+    <div class="terminal-item"><span class="t-label">REGIME</span><span class="t-value" id="tb-regime">—</span></div>
+    <div class="terminal-item"><span class="t-label">TIER</span><span class="t-value" id="tb-tier">—</span></div>
+    <div class="terminal-item"><span class="t-label">PAC</span><span class="t-value" id="tb-pac">€500</span></div>
+  </div>
+</div>
+
 <main class="app-main">
 <div class="container">
 
-<!-- SECTION 1 — STRATEGY -->
+<!-- SECTION 1 — TRACKER (ora prima sezione) -->
 <section class="section">
   <div class="section-header">
     <div>
-      <span class="section-num">01 · Strategy</span>
-      <h2 class="section-title">Cosa fare <em>questo mese</em></h2>
-    </div>
-    <span class="section-meta">aggiornato in tempo reale</span>
-  </div>
-
-  <div class="hero-card tier-0" id="hero-card">
-    <div class="hero-grid">
-      <div>
-        <div class="hero-eyebrow">
-          <span class="tier-badge tier-0" id="hero-eyebrow-tier">NORMAL</span>
-          <span id="hero-eyebrow-date">—</span>
-        </div>
-
-        <div class="hero-headline">
-          <h1 id="hero-headline">Caricamento strategia in corso…</h1>
-        </div>
-
-        <p class="hero-rationale" id="hero-rationale">
-          In attesa di dati di prezzo storici.
-        </p>
-
-        <div class="hero-amounts">
-          <div class="amount-block">
-            <span class="amount-label">PAC base</span>
-            <span class="amount-value" id="amount-base">€500</span>
-            <span class="amount-sub">automatico</span>
-          </div>
-          <div class="amount-block">
-            <span class="amount-label">Extra consigliato</span>
-            <span class="amount-value" id="amount-extra">€0</span>
-            <span class="amount-sub">tactical boost</span>
-          </div>
-          <div class="amount-block">
-            <span class="amount-label">Totale del mese</span>
-            <span class="amount-value" id="amount-total">€500</span>
-            <span class="amount-sub" id="allocation-note">90% Global · 10% Nasdaq</span>
-          </div>
-        </div>
-
-        <ul class="action-list" id="action-list"></ul>
-        <div class="warnings-list" id="warnings-list"></div>
-
-        <button class="btn btn-primary" id="btn-record-boost" style="margin-top:24px;">
-          ✓ Registra boost del mese
-        </button>
-      </div>
-
-      <div class="hero-stats">
-        <div class="stat-block">
-          <div class="stat-label">Drawdown 12M <span class="muted">global</span></div>
-          <div class="stat-value" id="stat-dd12m">—</div>
-          <div class="stat-trend">trigger primario</div>
-        </div>
-        <div class="stat-block">
-          <div class="stat-label">Drawdown ATH</div>
-          <div class="stat-value" id="stat-ddath">—</div>
-          <div class="stat-trend">all-time peak</div>
-        </div>
-        <div class="stat-block">
-          <div class="stat-label">vs MA 200d</div>
-          <div class="stat-value" id="stat-mad">—</div>
-          <div class="stat-trend">trend deviation</div>
-        </div>
-        <div class="stat-block">
-          <div class="stat-label">Z-score 21d</div>
-          <div class="stat-value" id="stat-zscore">—</div>
-          <div class="stat-trend">return distribution</div>
-        </div>
-        <div class="stat-block">
-          <div class="stat-label">Regime</div>
-          <div class="stat-value" id="stat-regime">—</div>
-          <div class="stat-trend">vol classification</div>
-        </div>
-        <div class="stat-block">
-          <div class="stat-label">Volatilità rolling</div>
-          <div class="stat-value" id="stat-vol">—</div>
-          <div class="stat-trend">60d annualizzata</div>
-        </div>
-        <div class="stat-block">
-          <div class="stat-label">Confidence</div>
-          <div class="stat-value" id="stat-confidence">—</div>
-          <div class="stat-trend">indicator agreement</div>
-        </div>
-        <div class="stat-block">
-          <div class="stat-label">Boost YTD</div>
-          <div class="stat-value" id="stat-boosts">0/6</div>
-          <div class="stat-trend">cap annuale</div>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- SECTION 2 — TRACKER -->
-<section class="section">
-  <div class="section-header">
-    <div>
-      <span class="section-num">02 · Tracker</span>
+      <span class="section-num">01 · Tracker</span>
       <h2 class="section-title">Portafoglio <em>live</em></h2>
     </div>
-    <span class="section-meta">drawdown integrato</span>
+    <span class="section-meta">Trade Republic · regime amministrato</span>
   </div>
 
   <div class="tracker-grid">
     <div class="card">
       <div class="card-header">
         <h3 class="card-title">Posizioni attuali</h3>
-        <span class="card-meta">Trade Republic</span>
+        <span class="card-meta">aggiornato 6h cache</span>
       </div>
 
       <div class="stat-hero">
@@ -159,9 +84,13 @@
           <span>P/L: <span class="delta" id="tot-pnl">—</span></span>
           <span class="delta" id="tot-pnlpct">—</span>
         </div>
-        <div class="stat-hero-meta" style="margin-top:8px;">
-          <span>tasse latenti: <span id="tot-latent-tax">—</span></span>
-          <span>netto: <strong class="bright" id="tot-net">—</strong></span>
+        <!-- Fiscalità latente in evidenza -->
+        <div class="latent-tax-banner" id="latent-tax-banner">
+          <span class="muted">Plus latente:</span> <strong id="tot-latent-plus">—</strong>
+          <span class="separator">·</span>
+          <span class="muted">Tassa se vendi tutto:</span> <strong class="warning" id="tot-latent-tax">—</strong>
+          <span class="separator">·</span>
+          <span class="muted">Netto disponibile:</span> <strong class="bright" id="tot-net">—</strong>
         </div>
       </div>
 
@@ -184,104 +113,107 @@
     </div>
 
     <div class="side-panel">
+      <!-- Box "Prossimi eventi" arricchito con pulsanti azione -->
       <div class="card">
         <div class="card-header">
-          <h3 class="card-title">Risk metrics</h3>
-          <span class="card-meta">global ETF</span>
-        </div>
-        <div class="metric-row">
-          <span class="metric-label">DD da ATH</span>
-          <span class="metric-value" id="metric-dd-ath">—</span>
-        </div>
-        <div class="metric-row">
-          <span class="metric-label">DD 12 mesi</span>
-          <span class="metric-value" id="metric-dd-12m">—</span>
-        </div>
-        <div class="metric-row">
-          <span class="metric-label">vs MA200</span>
-          <span class="metric-value" id="metric-mad">—</span>
-        </div>
-        <div class="metric-row">
-          <span class="metric-label">Vol 60d</span>
-          <span class="metric-value" id="metric-vol">—</span>
-        </div>
-        <div class="metric-row">
-          <span class="metric-label">Z-score 21d</span>
-          <span class="metric-value" id="metric-z">—</span>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-header">
-          <h3 class="card-title">Prossimi eventi</h3>
+          <h3 class="card-title">Prossimi eventi <span class="muted">e azioni</span></h3>
           <span class="card-meta">automatici</span>
         </div>
         <div id="calendar-events"></div>
+
+        <!-- AZIONI MANUALI sotto la lista eventi -->
+        <div class="action-panel">
+          <button class="btn btn-primary action-btn" id="btn-record-boost" title="Registra solo se hai effettivamente fatto un bonifico extra questo mese">
+            ✓ Registra boost del mese
+          </button>
+          <button class="btn action-btn" id="btn-change-pac" title="Modifica permanente dell'importo PAC mensile">
+            ↻ Modifica PAC strutturale
+          </button>
+          <div class="boost-history" id="boost-history">
+            <span class="muted small">Nessun boost registrato in YTD</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Box "Cosa fare questo mese" compatta -->
+      <div class="card hero-card-compact tier-0" id="hero-card">
+        <div class="card-header">
+          <h3 class="card-title">Cosa fare <em>questo mese</em></h3>
+          <span class="tier-badge tier-0" id="hero-eyebrow-tier">NORMAL</span>
+        </div>
+
+        <p class="hero-headline-compact" id="hero-headline">Caricamento…</p>
+        <p class="hero-rationale" id="hero-rationale">In attesa dati.</p>
+
+        <div class="amounts-row">
+          <span class="amount-pill"><span class="muted">PAC base</span> <strong id="amount-base">€500</strong></span>
+          <span class="amount-pill"><span class="muted">Extra</span> <strong id="amount-extra">€0</strong></span>
+          <span class="amount-pill highlight"><span class="muted">Totale</span> <strong id="amount-total">€500</strong></span>
+        </div>
+
+        <ul class="action-list" id="action-list"></ul>
+        <div class="warnings-list" id="warnings-list"></div>
       </div>
     </div>
   </div>
 </section>
 
-<!-- SECTION 3 — TREND -->
+<!-- SECTION 2 — PROJECTION TREND -->
 <section class="section">
   <div class="section-header">
     <div>
-      <span class="section-num">03 · Projection</span>
-      <h2 class="section-title">Trend <em>atteso</em> 5 anni</h2>
+      <span class="section-num">02 · Projection</span>
+      <h2 class="section-title">Trend <em>atteso</em></h2>
     </div>
-    <span class="section-meta">log-normal · n=5.000</span>
+    <div class="section-controls">
+      <span class="section-meta">log-normal · n=5.000</span>
+      <label class="toggle-inline">
+        <input type="checkbox" id="toggle-inflation"> <span>Mostra valori reali (al netto inflazione 2%)</span>
+      </label>
+      <div class="horizon-toggle" role="tablist" aria-label="Orizzonte trend">
+        <button class="horizon-btn" data-horizon="60" data-target="trend">5 anni</button>
+        <button class="horizon-btn active" data-horizon="120" data-target="trend">10 anni</button>
+        <button class="horizon-btn" data-horizon="240" data-target="trend">20 anni</button>
+      </div>
+    </div>
   </div>
 
   <div class="card">
     <div class="card-header">
-      <h3 class="card-title">Bande probabilistiche P5–P95</h3>
-      <span class="card-meta">PAC continuo €500/mese</span>
+      <h3 class="card-title">Bande probabilistiche</h3>
+      <span class="card-meta" id="trend-meta">—</span>
     </div>
 
-    <div class="chart-wrap">
-      <canvas id="trend-chart" aria-label="Grafico proiezione 5 anni"></canvas>
+    <div class="chart-wrap" style="height: 420px;">
+      <canvas id="trend-chart" aria-label="Grafico proiezione"></canvas>
     </div>
 
-    <div class="chart-legend">
-      <div class="legend-item">
-        <span class="legend-swatch" style="background:#2DD4BF"></span>
-        Mediana attesa (P50)
-      </div>
-      <div class="legend-item">
-        <span class="legend-swatch" style="background:rgba(45,212,191,0.15)"></span>
-        Banda P25–P75 (50% probabile)
-      </div>
-      <div class="legend-item">
-        <span class="legend-swatch" style="background:rgba(45,212,191,0.5);border:1px dashed #2DD4BF"></span>
-        P95 (best 5%)
-      </div>
-      <div class="legend-item">
-        <span class="legend-swatch" style="background:rgba(248,113,113,0.5);border:1px dashed #F87171"></span>
-        P5 (worst 5%)
-      </div>
-      <div class="legend-item">
-        <span class="legend-swatch" style="background:#FBBF24"></span>
-        Versato cumulato
-      </div>
-    </div>
+    <div id="trend-summary" class="trend-summary"></div>
   </div>
 </section>
 
-<!-- SECTION 4 — MONTE CARLO -->
+<!-- SECTION 3 — MONTE CARLO -->
 <section class="section">
   <div class="section-header">
     <div>
-      <span class="section-num">04 · Monte Carlo</span>
-      <h2 class="section-title">50.000 simulazioni a <em>20 anni</em></h2>
+      <span class="section-num">03 · Monte Carlo</span>
+      <h2 class="section-title">Distribuzione <em>finale</em></h2>
     </div>
-    <span class="section-meta" id="mc-meta">computing…</span>
+    <div class="section-controls">
+      <span class="section-meta" id="mc-meta">computing…</span>
+      <div class="horizon-toggle" role="tablist" aria-label="Orizzonte Monte Carlo">
+        <button class="horizon-btn" data-horizon="60" data-target="mc">5 anni</button>
+        <button class="horizon-btn" data-horizon="120" data-target="mc">10 anni</button>
+        <button class="horizon-btn active" data-horizon="240" data-target="mc">20 anni</button>
+      </div>
+    </div>
   </div>
 
   <div class="card">
     <div id="mc-status" class="mc-status">
       <div class="mc-spinner" role="progressbar" aria-label="Caricamento Monte Carlo"></div>
       <div id="mc-progress">In attesa di avvio…</div>
-      <div class="muted" style="font-size:11px;">Web Worker: ~3-8 secondi a strategia</div>
+      <div class="muted" style="font-size:11px;">Web Worker · 50.000 simulazioni</div>
     </div>
 
     <div id="mc-table-wrap" class="hidden">
@@ -304,118 +236,40 @@
         </table>
       </div>
 
-      <div class="chart-wrap" style="margin-top:32px; height:320px;">
-        <canvas id="mc-chart" aria-label="Grafico distribuzione Monte Carlo"></canvas>
+      <!-- Range chart (P25-P75 + mediana + versato) -->
+      <div class="chart-wrap" style="margin-top:32px; height:220px;">
+        <canvas id="mc-chart" aria-label="Grafico distribuzione P25-P75"></canvas>
+      </div>
+
+      <!-- Probability line chart (asse 25k step) -->
+      <div class="chart-wrap" style="margin-top:32px; height:340px;">
+        <canvas id="mc-prob-chart" aria-label="Probabilità soglie"></canvas>
       </div>
     </div>
   </div>
 </section>
 
-<!-- SECTION 5 — TOOLS -->
+<!-- SECTION 4 — TOOLS LINK -->
 <section class="section">
   <div class="section-header">
     <div>
-      <span class="section-num">05 · Tools</span>
+      <span class="section-num">04 · Tools</span>
       <h2 class="section-title">Decision <em>support</em></h2>
     </div>
-    <span class="section-meta">tax · real estate IRR</span>
+    <span class="section-meta">strumenti separati</span>
   </div>
 
-  <div class="tools-grid">
-    <!-- TAX SIMULATOR -->
-    <div class="tool-card">
-      <div class="card-header">
-        <h3 class="card-title">Simula vendita ETF</h3>
-        <span class="card-meta">regime amministrato · 26%</span>
-      </div>
-
-      <div class="field">
-     <label for="tax-etf-select">ETF da vendere</label>
-     <select id="tax-etf-select" aria-label="Seleziona ETF">
-       <option value="">— Seleziona ETF (auto-fill PMC e prezzo) —</option>
-     </select>
-     <div class="field-help">Selezionare un ETF precompila PMC e prezzo correnti dal portafoglio</div>
-   </div>
-   <div class="field">
-     <label for="tax-amount">Importo da vendere (€)</label>
-     <input type="number" id="tax-amount" step="100" placeholder="es. 25000">
-   </div>
-      <div class="field-row">
-        <div class="field">
-          <label for="tax-cost">PMC (€/quota)</label>
-          <input type="number" id="tax-cost" step="0.01" placeholder="es. 110.50">
-        </div>
-        <div class="field">
-          <label for="tax-price">Prezzo oggi (€/quota)</label>
-          <input type="number" id="tax-price" step="0.01" placeholder="es. 124.50">
-        </div>
-      </div>
-
-      <div id="tax-result" class="result-box">
-        <div class="muted">Inserisci un importo per simulare la vendita.</div>
-      </div>
-    </div>
-
-    <!-- REAL ESTATE -->
-    <div class="tool-card">
-      <div class="card-header">
-        <h3 class="card-title">IRR Operazione immobiliare</h3>
-        <span class="card-meta">costi Italia · plus 26%</span>
-      </div>
-
-      <form id="re-form" onsubmit="return false;">
-        <div class="field-row">
-          <div class="field">
-            <label for="re-purchase">Prezzo acquisto (€)</label>
-            <input type="number" id="re-purchase" step="1000" value="100000">
-          </div>
-          <div class="field">
-            <label for="re-sale">Prezzo vendita (€)</label>
-            <input type="number" id="re-sale" step="1000" value="150000">
-          </div>
-        </div>
-        <div class="field-row">
-          <div class="field">
-            <label for="re-duration">Durata (mesi)</label>
-            <input type="number" id="re-duration" min="1" max="60" value="6">
-          </div>
-          <div class="field">
-            <label for="re-renovation">Ristrutturazione (€)</label>
-            <input type="number" id="re-renovation" step="500" value="0">
-          </div>
-        </div>
-        <div class="field-row">
-          <div class="field">
-            <label for="re-cadastral">Valore catastale (€) <span class="muted" style="text-transform:none;">opz.</span></label>
-            <input type="number" id="re-cadastral" step="1000" placeholder="se vuoto, stima 60% prezzo">
-            <div class="field-help">Se omesso: stimato come 60% del prezzo. Trovi il dato reale sulla visura catastale.</div>
-          </div>
-          <div class="field">
-            <label for="re-holding">Holding €/mese</label>
-            <input type="number" id="re-holding" step="50" value="200">
-            <div class="field-help">IMU, condominio, utenze base</div>
-          </div>
-        </div>
-        <div class="field-row">
-          <div class="field">
-            <label class="checkbox-label">
-              <input type="checkbox" id="re-firsthome"> Prima casa (registro 2%)
-            </label>
-          </div>
-          <div class="field">
-            <label class="checkbox-label">
-              <input type="checkbox" id="re-newbuilding"> Da costruttore (IVA)
-            </label>
-          </div>
-        </div>
-      </form>
-
-      <div id="re-result" class="result-box">
-        <div class="muted">Compila il form per calcolare l'IRR.</div>
-      </div>
-
-      <div id="re-stress" style="margin-top:16px;"></div>
-    </div>
+  <div class="tools-link-grid">
+    <a href="tax.html" class="tool-link-card">
+      <div class="tool-link-num">→</div>
+      <div class="tool-link-title">Simulatore vendita ETF</div>
+      <div class="tool-link-desc">Calcola netto disponibile, plus/minus, costo opportunità a 5/10/20 anni. Auto-fill PMC e prezzo dal portafoglio.</div>
+    </a>
+    <a href="realestate.html" class="tool-link-card">
+      <div class="tool-link-num">→</div>
+      <div class="tool-link-title">IRR Operazione immobiliare</div>
+      <div class="tool-link-desc">Tassazione completa Italia, costi holding, confronto vs PAC ETF. Stress test prezzo vendita e durata.</div>
+    </a>
   </div>
 </section>
 
@@ -445,9 +299,7 @@
         Aggiornamento prezzi manuale
       </h3>
       <p style="font-size:12px;color:var(--text-muted);line-height:1.5;">
-        Inserisci i prezzi correnti dei tuoi ETF dalla pagina justETF (link sotto ogni campo). 
-        Aggiornali una volta al mese prima della verifica della Strategy. 
-        I prezzi manuali hanno priorità su qualsiasi fonte automatica.
+        Inserisci i prezzi correnti dei tuoi ETF dalla pagina justETF. I prezzi manuali hanno priorità su qualsiasi fonte automatica.
       </p>
     </div>
 
@@ -459,6 +311,38 @@
         <button class="btn" id="settings-clear" type="button">Cancella cache</button>
       </div>
       <button class="btn btn-primary" id="settings-save" type="button">Salva</button>
+    </div>
+  </div>
+</div>
+
+<!-- CHANGE PAC MODAL -->
+<div class="modal-backdrop" id="changepac-modal" role="dialog" aria-labelledby="changepac-title" aria-modal="true">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 class="modal-title" id="changepac-title">Modifica PAC strutturale</h2>
+      <button class="modal-close" id="changepac-close" aria-label="Chiudi">×</button>
+    </div>
+
+    <p style="font-size:13px;color:var(--text-muted);line-height:1.6;margin-bottom:16px;">
+      Imposta un cambio <strong>permanente</strong> dell'importo PAC mensile. La proiezione e Monte Carlo verranno ricalcolati con il nuovo schedule.
+    </p>
+
+    <div class="field">
+      <label for="cp-new-amount">Nuovo importo PAC (€/mese)</label>
+      <input type="number" id="cp-new-amount" step="50" min="0" placeholder="es. 700">
+    </div>
+
+    <div class="field">
+      <label for="cp-start-month">Da quando? (mesi da oggi)</label>
+      <input type="number" id="cp-start-month" step="1" min="0" max="240" value="0">
+      <div class="field-help">0 = subito, 12 = tra un anno, 60 = tra 5 anni, ecc.</div>
+    </div>
+
+    <div id="cp-current-schedule" class="schedule-display"></div>
+
+    <div style="display:flex;gap:12px;justify-content:space-between;border-top:1px solid var(--border-subtle);padding-top:24px;margin-top:16px;">
+      <button class="btn" id="cp-reset" type="button">Reset (PAC base €500 costante)</button>
+      <button class="btn btn-primary" id="cp-save" type="button">Applica e ricalcola</button>
     </div>
   </div>
 </div>

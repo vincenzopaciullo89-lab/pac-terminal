@@ -23,10 +23,9 @@ import {
   getManualPriceAge,
   clearManualPrices,
 } from './priceProvider.js';
-import { runMonteCarlo, generateTrendPaths, clearMCCache } from './monteCarloEngine.js';
-import { simulateSale } from './taxEngine.js';
-import { computeFlip, stressTest } from './realEstateEngine.js';
+import { runMonteCarlo as _MC, generateTrendPaths as _TP, deflateTrend, clearMCCache as _CMC } from './monteCarloEngine.js';
 import { renderTrendChart, renderMCDistributionChart, renderMCProbabilityChart, destroyAllCharts } from './charts.js';
+import { getBoostStats } from './strategyEngine.js';
 
 // -------------------------------------------------------------------------
 // FORMATTING
@@ -67,6 +66,44 @@ const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 // -------------------------------------------------------------------------
 // STATE
 // -------------------------------------------------------------------------
+
+// -------------------------------------------------------------------------
+// PAC SCHEDULE HELPERS — gestione schedule variabile salvata in localStorage
+// -------------------------------------------------------------------------
+const PAC_SCHEDULE_KEY = 'pd_pac_schedule_v3';
+
+function getPacSchedule() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PAC_SCHEDULE_KEY) || 'null');
+    if (Array.isArray(saved) && saved.length > 0) return saved;
+  } catch {}
+  // Default: PAC base costante
+  return [{ startMonth: 0, amount: config.pac.baseMonthlyAmount }];
+}
+
+function savePacSchedule(schedule) {
+  try {
+    localStorage.setItem(PAC_SCHEDULE_KEY, JSON.stringify(schedule));
+  } catch {}
+}
+
+function resetPacSchedule() {
+  try { localStorage.removeItem(PAC_SCHEDULE_KEY); } catch {}
+}
+
+// -------------------------------------------------------------------------
+// HORIZON STATE (5/10/20 anni per trend e MC)
+// -------------------------------------------------------------------------
+const horizonState = {
+  trend: 120,  // default 10 anni
+  mc: 240,     // default 20 anni
+};
+
+// -------------------------------------------------------------------------
+// INFLATION TOGGLE STATE
+// -------------------------------------------------------------------------
+let inflationActive = false;
+
 const state = {
   prices: {},
   portfolio: null,
@@ -79,6 +116,98 @@ const state = {
 // -------------------------------------------------------------------------
 // HEADER STATUS — verde se c'è almeno una fonte fresca (manual o cache)
 // -------------------------------------------------------------------------
+
+// -------------------------------------------------------------------------
+// TERMINAL BAR (Bloomberg-style) — sticky in alto
+// -------------------------------------------------------------------------
+function renderTerminalBar() {
+  const m = state.metrics.global;
+  const strat = state.strategy;
+  const portfolio = state.portfolio;
+
+  // VWCE prezzo (cerca da prices o da portfolio holdings)
+  let vwcePrice = null;
+  if (state.prices['VWCE.MI']?.price) {
+    vwcePrice = state.prices['VWCE.MI'].price;
+  } else if (portfolio?.holdings) {
+    const vwceH = portfolio.holdings.find(h => h.ticker === 'VWCE.MI');
+    if (vwceH) vwcePrice = vwceH.currentPrice;
+  }
+
+  setBar('#tb-vwce', vwcePrice ? fmt.eur(vwcePrice, 2) : '—');
+
+  setBarPct('#tb-dd12m', m?.dd12M, true);
+  setBarPct('#tb-ddath', m?.ddATH, true);
+  setBarPct('#tb-ma200', m?.madMA200, false);
+  setBarPct('#tb-vol', m?.volRolling, false, false, 1);
+
+  if (m && isNum(m.zScore)) {
+    const zEl = $('#tb-zscore');
+    if (zEl) {
+      zEl.textContent = m.zScore.toFixed(2);
+      zEl.className = 't-value ' + (Math.abs(m.zScore) > 2 ? 'warning' : '');
+    }
+  } else setBar('#tb-zscore', '—');
+
+  setBar('#tb-regime', (m?.regime || '—').toUpperCase());
+  if (strat) {
+    const tierEl = $('#tb-tier');
+    if (tierEl) {
+      tierEl.textContent = `T${strat.tier ?? 0}`;
+      tierEl.className = 't-value ' + (strat.tier > 0 ? 'warning' : 'positive');
+    }
+  }
+
+  // PAC schedule corrente
+  const sched = getPacSchedule();
+  const pacEl = $('#tb-pac');
+  if (pacEl) {
+    if (sched.length === 1) {
+      pacEl.textContent = `€${sched[0].amount}`;
+    } else {
+      pacEl.textContent = sched.map(s =>
+        s.startMonth === 0 ? `€${s.amount}` : `${(s.startMonth/12).toFixed(0)}a→€${s.amount}`
+      ).join('/');
+    }
+  }
+}
+
+function setBar(sel, value) {
+  const el = $(sel);
+  if (el) {
+    el.textContent = value;
+    el.className = 't-value';
+  }
+}
+
+function setBarPct(sel, value, negativeIsBad = false, positiveIsBad = false, dp = 1) {
+  const el = $(sel);
+  if (!el) return;
+  if (!isNum(value)) {
+    el.textContent = '—';
+    el.className = 't-value';
+    return;
+  }
+  el.textContent = fmt.pct(value, dp);
+  let cls = 't-value';
+  if (value < -0.05 && negativeIsBad) cls += ' negative';
+  else if (value > 0.05 && !positiveIsBad) cls += ' positive';
+  else if (value > 0.10 && negativeIsBad) cls += ' positive';
+  el.className = cls;
+}
+
+
+// Helper null-safe per setText e setClass
+function safeSetText(sel, text) {
+  const el = $(sel); if (el) el.textContent = text;
+}
+function safeSetClass(sel, className) {
+  const el = $(sel); if (el) el.className = className;
+}
+function safeSetHTML(sel, html) {
+  const el = $(sel); if (el) el.innerHTML = html;
+}
+
 function renderHeaderStatus() {
   const apiStatus = $('#api-status');
   if (!apiStatus) return;
@@ -113,10 +242,10 @@ function renderHero(strategy) {
 
   card.className = `hero-card tier-${strategy.tier}`;
 
-  $('#hero-eyebrow-tier').textContent = strategy.tierLabel || '—';
+  safeSetText('#hero-eyebrow-tier', strategy.tierLabel || '—');
   const eyebrowBadge = $('#hero-eyebrow-tier');
   if (eyebrowBadge) eyebrowBadge.className = `tier-badge tier-${strategy.tier}`;
-  $('#hero-eyebrow-date').textContent = fmt.date(new Date()).toUpperCase();
+  safeSetText('#hero-eyebrow-date', fmt.date(new Date()).toUpperCase());
 
   let headline;
   if (strategy.tier === 0) {
@@ -142,24 +271,24 @@ function renderHero(strategy) {
   $('#amount-total').className = `amount-value ${strategy.tier > 0 && !strategy.capReached ? 'positive' : ''}`;
 
   // Stats — TUTTI con isNum check defensivo
-  $('#stat-dd12m').textContent = isNum(strategy.drawdown) ? fmt.pct(strategy.drawdown) : '—';
-  $('#stat-dd12m').className = `stat-value ${isNum(strategy.drawdown) && strategy.drawdown < -0.05 ? 'negative' : 'positive'}`;
+  safeSetText('#stat-dd12m', isNum(strategy.drawdown) ? fmt.pct(strategy.drawdown) : '—');
+  safeSetClass('#stat-dd12m', `stat-value ${isNum(strategy.drawdown) && strategy.drawdown < -0.05 ? 'negative' : 'positive'}`);
 
-  $('#stat-ddath').textContent = isNum(strategy.drawdownATH) ? fmt.pct(strategy.drawdownATH) : '—';
-  $('#stat-ddath').className = `stat-value ${isNum(strategy.drawdownATH) && strategy.drawdownATH < -0.05 ? 'negative' : 'positive'}`;
+  safeSetText('#stat-ddath', isNum(strategy.drawdownATH) ? fmt.pct(strategy.drawdownATH) : '—');
+  safeSetClass('#stat-ddath', `stat-value ${isNum(strategy.drawdownATH) && strategy.drawdownATH < -0.05 ? 'negative' : 'positive'}`);
 
-  $('#stat-mad').textContent = isNum(strategy.madMA200) ? fmt.pct(strategy.madMA200) : '—';
-  $('#stat-mad').className = `stat-value ${isNum(strategy.madMA200) && strategy.madMA200 < 0 ? 'negative' : 'positive'}`;
+  safeSetText('#stat-mad', isNum(strategy.madMA200) ? fmt.pct(strategy.madMA200) : '—');
+  safeSetClass('#stat-mad', `stat-value ${isNum(strategy.madMA200) && strategy.madMA200 < 0 ? 'negative' : 'positive'}`);
 
-  $('#stat-zscore').textContent = isNum(strategy.zScore) ? strategy.zScore.toFixed(2) : '—';
+  safeSetText('#stat-zscore', isNum(strategy.zScore) ? strategy.zScore.toFixed(2) : '—');
 
   const regime = strategy.regime || 'normal';
-  $('#stat-regime').innerHTML = `<span class="regime-pill ${regime}">${regime}</span>`;
+  safeSetHTML('#stat-regime', `<span class="regime-pill ${regime}">${regime}</span>`);
 
-  $('#stat-vol').textContent = isNum(strategy.volRolling) ? fmt.pct(strategy.volRolling, 1) : '—';
+  safeSetText('#stat-vol', isNum(strategy.volRolling) ? fmt.pct(strategy.volRolling, 1) : '—');
 
-  $('#stat-confidence').textContent = (strategy.confidence || 'low').toUpperCase();
-  $('#stat-boosts').textContent = `${strategy.monthsUsed ?? 0}/${config.pac.capBoostMonthsPerYear}`;
+  safeSetText('#stat-confidence', (strategy.confidence || 'low').toUpperCase());
+  safeSetText('#stat-boosts', `${strategy.monthsUsed ?? 0}/${config.pac.capBoostMonthsPerYear}`);
 
   // Action items (defensive)
   const ul = $('#action-list');
@@ -189,7 +318,7 @@ function renderHero(strategy) {
     }
   }
 
-  $('#allocation-note').textContent = strategy.allocationNote || '';
+  safeSetText('#allocation-note', strategy.allocationNote || '');
 }
 
 // -------------------------------------------------------------------------
@@ -231,21 +360,15 @@ function renderTracker(portfolio) {
     }
   }
 
-  const globalMetrics = state.metrics.global;
-  if (globalMetrics) {
-    $('#metric-dd-ath').textContent = isNum(globalMetrics.ddATH) ? fmt.pct(globalMetrics.ddATH) : '—';
-    $('#metric-dd-ath').className = `metric-value ${isNum(globalMetrics.ddATH) && globalMetrics.ddATH < -0.05 ? 'negative' : 'positive'}`;
-    $('#metric-dd-12m').textContent = isNum(globalMetrics.dd12M) ? fmt.pct(globalMetrics.dd12M) : '—';
-    $('#metric-dd-12m').className = `metric-value ${isNum(globalMetrics.dd12M) && globalMetrics.dd12M < -0.05 ? 'negative' : 'positive'}`;
-    $('#metric-mad').textContent = isNum(globalMetrics.madMA200) ? fmt.pct(globalMetrics.madMA200) : '—';
-    $('#metric-mad').className = `metric-value ${isNum(globalMetrics.madMA200) && globalMetrics.madMA200 < 0 ? 'negative' : 'positive'}`;
-    $('#metric-vol').textContent = isNum(globalMetrics.volRolling) ? fmt.pct(globalMetrics.volRolling, 1) : '—';
-    $('#metric-z').textContent = isNum(globalMetrics.zScore) ? globalMetrics.zScore.toFixed(2) : '—';
-  } else {
-    ['#metric-dd-ath', '#metric-dd-12m', '#metric-mad', '#metric-vol', '#metric-z'].forEach(s => {
-      const el = $(s);
-      if (el) el.textContent = '—';
-    });
+  // Risk metrics rimossi dal tracker (ora solo nella terminal-bar in alto, no ridondanza)
+  // Ledger fiscalità latente in evidenza
+  const totalPlus = portfolio.totalPnL > 0 ? portfolio.totalPnL : 0;
+  const latentTaxEl = $('#tot-latent-plus');
+  if (latentTaxEl) {
+    latentTaxEl.textContent = portfolio.totalPnL >= 0
+      ? '+' + fmt.eur(totalPlus)
+      : fmt.eur(portfolio.totalPnL);
+    latentTaxEl.className = portfolio.totalPnL >= 0 ? 'positive' : 'negative';
   }
 
   const events = getNextScheduledEvents();
@@ -276,16 +399,13 @@ function renderMCResults(results) {
   if (!tbody) return;
   tbody.innerHTML = '';
 
-  // FILTRO: mostriamo solo 3 strategie chiave (rimossi PAC 400 costante e 530 costante)
-  // - PAC €500 costante: baseline di confronto
-  // - PAC €500 + tactical: strategia raccomandata
-  // - PAC €400 + tactical: alternativa conservativa
-  const KEEP_LABELS = ['PAC \u20ac500 costante', 'PAC \u20ac500 + tactical', 'PAC \u20ac400 + tactical'];
-  const filtered = results.strategies.filter(s => KEEP_LABELS.includes(s.label));
+  // v3: il worker ora ritorna UNA SOLA strategia "PAC tactical"
+  // (l'utente non vuole confronti con costante)
+  const strategies = results.strategies;
 
-  for (const s of filtered) {
+  for (const s of strategies) {
     const tr = document.createElement('tr');
-    if (s.id === 'pac500_tactical') tr.classList.add('highlight');
+    tr.classList.add('highlight');
     tr.innerHTML = `
       <td>${s.label}</td>
       <td>${fmt.eur(s.contributedMedian)}</td>
@@ -304,16 +424,13 @@ function renderMCResults(results) {
   $('#mc-status').classList.add('hidden');
   $('#mc-table-wrap').classList.remove('hidden');
 
-  // Render dei due grafici (filtra anche qui per coerenza)
-  renderMCDistributionChart('#mc-chart', results, KEEP_LABELS);
-
-  // NUOVO: grafico delle probabilit\u00e0 (creato dinamicamente se manca canvas)
-  ensureProbCanvas();
-  renderMCProbabilityChart('#mc-prob-chart', results, KEEP_LABELS);
+  // Render dei due grafici (no filtro: una sola strategia)
+  renderMCDistributionChart('#mc-chart', results);
+  renderMCProbabilityChart('#mc-prob-chart', results);
 }
 
-// Crea canvas per grafico probabilit\u00e0 se non esiste in HTML
-function ensureProbCanvas() {
+// Helper rimosso: grafici hanno gi\u00e0 canvas in HTML
+function _ensureProbCanvasUnused() {
   if ($('#mc-prob-chart')) return;
   const mcChart = $('#mc-chart');
   if (!mcChart) return;
@@ -327,301 +444,6 @@ function ensureProbCanvas() {
 
 // -------------------------------------------------------------------------
 // TAX SIMULATOR
-// -------------------------------------------------------------------------
-function setupTaxSim() {
-  // Popola dropdown con ETF dal portafoglio
-  function populateETFSelect() {
-    const select = $('#tax-etf-select');
-    if (!select || !state.portfolio?.holdings) return;
-
-    // Mantieni la prima opzione (placeholder)
-    const placeholder = select.querySelector('option[value=""]');
-    select.innerHTML = '';
-    if (placeholder) select.appendChild(placeholder);
-
-    // Aggiungi un'opzione per ogni ETF con quote > 0
-    state.portfolio.holdings.forEach(h => {
-      if (h.units <= 0) return;  // skip ETF a 0 quote (es. VWCE prima del primo PAC)
-      const opt = document.createElement('option');
-      opt.value = h.isin;
-      const shortName = h.name.split(' ').slice(0, 4).join(' ');
-      const legacyTag = h.isLegacy ? ' [legacy]' : '';
-      opt.textContent = `${shortName}${legacyTag} — PMC €${h.avgCost.toFixed(2)} · Prezzo €${h.currentPrice.toFixed(2)}`;
-      opt.dataset.pmc = h.avgCost;
-      opt.dataset.price = h.currentPrice;
-      opt.dataset.units = h.units;
-      opt.dataset.value = h.currentValue;
-      opt.dataset.pnl = h.pnlAbs;
-      select.appendChild(opt);
-    });
-  }
-
-  // Handler quando l'utente seleziona un ETF
-  function onETFSelect() {
-    const select = $('#tax-etf-select');
-    const opt = select?.selectedOptions?.[0];
-    if (!opt || !opt.value) return;
-
-    const pmc = parseFloat(opt.dataset.pmc);
-    const price = parseFloat(opt.dataset.price);
-
-    // Precompila PMC e prezzo
-    if (!isNaN(pmc)) $('#tax-cost').value = pmc.toFixed(2);
-    if (!isNaN(price)) $('#tax-price').value = price.toFixed(2);
-
-    // Trigger ricalcolo
-    calc();
-  }
-
-  const calc = () => {
-    const amt = parseFloat($('#tax-amount').value);
-    const cost = parseFloat($('#tax-cost').value);
-    const price = parseFloat($('#tax-price').value);
-    const out = $('#tax-result');
-    if (!out) return;
-
-    if (!amt || amt <= 0) {
-      out.className = 'result-box';
-      // Se ho un ETF selezionato, mostra info utili anche senza importo
-      const select = $('#tax-etf-select');
-      const opt = select?.selectedOptions?.[0];
-      if (opt && opt.value) {
-        const value = parseFloat(opt.dataset.value);
-        const pnl = parseFloat(opt.dataset.pnl);
-        const taxIfFull = pnl > 0 ? pnl * 0.26 : 0;
-        out.innerHTML = `
-          <div class="muted" style="margin-bottom:12px;">Inserisci un importo per simulare la vendita parziale.</div>
-          <div style="display:grid;grid-template-columns:1fr auto;gap:6px 16px;font-size:12px;">
-            <span class="muted">Posizione attuale</span><span class="text-right">${fmt.eur(value)}</span>
-            <span class="muted">Plus/minus latente</span>
-            <span class="text-right ${pnl >= 0 ? 'positive' : 'negative'}">${fmt.eur(pnl)}</span>
-            <span class="muted">Se vendessi TUTTO oggi, tassa</span>
-            <span class="text-right negative">${fmt.eur(taxIfFull)}</span>
-          </div>
-        `;
-      } else {
-        out.innerHTML = '<div class="muted">Seleziona un ETF dal menu e inserisci un importo per simulare la vendita.</div>';
-      }
-      return;
-    }
-
-    const r = simulateSale(amt, cost || 0, price || 1);
-    if (!r) return;
-
-    let cls = 'result-box';
-    if (r.realizedGain < 0) cls += ' positive';
-    else if (r.effectiveRate > 0.10) cls += ' warning';
-
-    out.className = cls;
-    out.innerHTML = `
-      <div class="result-verdict">${
-        r.realizedGain > 0
-          ? `Vendita con plusvalenza · netto disponibile <strong>${fmt.eur(r.netProceeds)}</strong>`
-          : `Vendita con minusvalenza · nessuna tassa, accumuli credito`
-      }</div>
-      <div style="display:grid;grid-template-columns:1fr auto;gap:8px 16px;">
-        <span class="muted">Importo lordo</span><span class="text-right">${fmt.eur(r.saleAmount)}</span>
-        <span class="muted">Quote da vendere</span><span class="text-right">${fmt.num(r.unitsToSell, 4)}</span>
-        <span class="muted">Costo basis</span><span class="text-right">${fmt.eur(r.costBasisSold)}</span>
-        <span class="muted">${r.realizedGain >= 0 ? 'Plusvalenza' : 'Minusvalenza'}</span>
-        <span class="text-right ${r.realizedGain >= 0 ? 'positive' : 'negative'}">${fmt.eur(r.realizedGain)}</span>
-        <span class="muted">Tassa 26%</span><span class="text-right negative">${fmt.eur(r.taxDue)}</span>
-        <span class="bright"><strong>Netto disponibile</strong></span>
-        <span class="text-right bright"><strong>${fmt.eur(r.netProceeds)}</strong></span>
-        <span class="muted" style="margin-top:8px">Aliquota effettiva</span>
-        <span class="text-right" style="margin-top:8px">${fmt.pct(r.effectiveRate, 2)}</span>
-      </div>
-      <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border-subtle);font-size:11px;">
-        <strong style="color:var(--text-bright)">Costo opportunità del prelievo:</strong><br>
-        <span class="muted">5 anni:</span> ${fmt.eur(r.oppCost5y)}<br>
-        <span class="muted">10 anni:</span> ${fmt.eur(r.oppCost10y)}<br>
-        <span class="muted">20 anni:</span> ${fmt.eur(r.oppCost20y)}
-      </div>
-      ${r.warnings.length ? `<div style="margin-top:16px;font-size:11px;color:var(--accent-warning)">${r.warnings.map(w => '⚠️ ' + w).join('<br>')}</div>` : ''}
-    `;
-  };
-
-  // Bind input listeners
-  ['#tax-amount', '#tax-cost', '#tax-price'].forEach(id => {
-    $(id)?.addEventListener('input', calc);
-  });
-  $('#tax-etf-select')?.addEventListener('change', onETFSelect);
-
-  // Popola il select al primo render
-  populateETFSelect();
-
-  // Esponi funzione di refresh per chiamarla quando cambiano i prezzi
-  window._taxSimRefresh = populateETFSelect;
-
-  calc();
-}
-
-
-// -------------------------------------------------------------------------
-// REAL ESTATE
-// -------------------------------------------------------------------------
-function setupRealEstate() {
-  const calc = () => {
-    const input = {
-      purchasePrice: parseFloat($('#re-purchase').value) || 0,
-      salePrice: parseFloat($('#re-sale').value) || 0,
-      durationMonths: parseFloat($('#re-duration').value) || 6,
-      renovation: parseFloat($('#re-renovation').value) || 0,
-      isFirstHome: $('#re-firsthome')?.checked || false,
-      isNewBuilding: $('#re-newbuilding')?.checked || false,
-      holdingCostsMonthly: parseFloat($('#re-holding').value) || 0,
-      cadastralValue: parseFloat($('#re-cadastral')?.value) || 0,
-    };
-    const out = $('#re-result');
-    if (!out) return;
-
-    if (input.purchasePrice <= 0 || input.salePrice <= 0) {
-      out.className = 'result-box';
-      out.innerHTML = '<div class="muted">Inserisci prezzo acquisto e vendita per calcolare l\'IRR.</div>';
-      const stressBox = $('#re-stress');
-      if (stressBox) stressBox.innerHTML = '';
-      return;
-    }
-
-    const r = computeFlip(input);
-    out.className = `result-box ${r.verdictClass}`;
-
-    const cvNote = r.cadastralValueEstimated
-      ? ` <span class="muted">(stimato 60% del prezzo)</span>`
-      : '';
-
-    out.innerHTML = `
-      <div class="result-verdict">${r.verdict}</div>
-      <div style="display:grid;grid-template-columns:1fr auto;gap:8px 16px;font-size:13px;">
-        <span class="muted">Valore catastale</span><span class="text-right">${fmt.eur(r.cadastralValue)}${cvNote}</span>
-        <span class="muted">Capitale impiegato</span><span class="text-right">${fmt.eur(r.capitalEmployed)}</span>
-        <span class="muted">Profitto netto</span>
-        <span class="text-right ${r.netProfit >= 0 ? 'positive' : 'negative'}"><strong>${fmt.eur(r.netProfit)}</strong></span>
-        <span class="muted">RoC</span>
-        <span class="text-right ${r.roc >= 0 ? 'positive' : 'negative'}">${fmt.pct(r.roc)}</span>
-        <span class="muted bright"><strong>IRR annualizzato</strong></span>
-        <span class="text-right ${r.irrAnnualized >= 0.12 ? 'positive' : r.irrAnnualized >= 0 ? 'warning' : 'negative'}">
-          <strong>${fmt.pct(r.irrAnnualized, 1)}</strong>
-        </span>
-        <span class="muted">VWCE atteso stesso periodo</span><span class="text-right">${fmt.eur(r.vwceExpected)}</span>
-        <span class="muted">Vantaggio vs VWCE</span>
-        <span class="text-right ${r.advantageVsVWCE >= 0 ? 'positive' : 'negative'}">${fmt.eur(r.advantageVsVWCE)}</span>
-        <span class="muted">Break-even prezzo vendita</span><span class="text-right">${fmt.eur(r.breakEven)}</span>
-      </div>
-      <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border-subtle);">
-        <details>
-          <summary style="cursor:pointer;font-size:11px;color:var(--accent-info);text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Breakdown dei costi</summary>
-          <div style="margin-top:8px;display:grid;grid-template-columns:1fr auto;gap:6px 16px;font-size:11px;">
-            <span class="muted">Imposta registro / IVA</span><span class="text-right">${fmt.eur(r.breakdown.registro + r.breakdown.iva)}</span>
-            <span class="muted">Imposte ipotec/catastali</span><span class="text-right">${fmt.eur(r.breakdown.ipotec)}</span>
-            <span class="muted">Notaio acquisto</span><span class="text-right">${fmt.eur(r.breakdown.notaioAcq)}</span>
-            <span class="muted">Agenzia acquisto (+IVA)</span><span class="text-right">${fmt.eur(r.breakdown.agenziaAcq)}</span>
-            <span class="muted">Ristrutturazione</span><span class="text-right">${fmt.eur(r.breakdown.renovation)}</span>
-            <span class="muted">Holding costs (${input.durationMonths}m)</span><span class="text-right">${fmt.eur(r.breakdown.holdingTot)}</span>
-            <span class="muted">Agenzia vendita (+IVA)</span><span class="text-right">${fmt.eur(r.breakdown.agenziaVend)}</span>
-            <span class="muted">Plusvalenza tassata</span><span class="text-right">${fmt.eur(r.breakdown.plusTax)}</span>
-          </div>
-        </details>
-      </div>
-    `;
-
-    const stressRows = stressTest(input);
-    const stressBox = $('#re-stress');
-    if (stressBox) {
-      stressBox.innerHTML = `
-        <div class="card-meta" style="margin-bottom:12px">Stress Test</div>
-        <table class="mc-table" style="font-size:11px">
-          <thead><tr><th>Scenario</th><th>IRR</th><th>Profitto</th></tr></thead>
-          <tbody>
-            ${stressRows.map(s => `<tr>
-              <td>${s.name}</td>
-              <td class="${s.irrAnnualized >= 0.12 ? 'positive' : s.irrAnnualized >= 0 ? '' : 'negative'}">${fmt.pct(s.irrAnnualized, 1)}</td>
-              <td class="${s.netProfit >= 0 ? '' : 'negative'}">${fmt.eur(s.netProfit)}</td>
-            </tr>`).join('')}
-          </tbody>
-        </table>
-      `;
-    }
-  };
-
-  $$('#re-form input, #re-form select').forEach(el => {
-    el.addEventListener('input', calc);
-    el.addEventListener('change', calc);
-  });
-  calc();
-}
-
-// -------------------------------------------------------------------------
-// SETTINGS MODAL — solo manual prices, no più Twelve Data
-// -------------------------------------------------------------------------
-function setupSettings() {
-  const modal = $('#settings-modal');
-  if (!modal) return;
-  const open = () => {
-    modal.classList.add('show');
-    populateManualPrices();
-  };
-  const close = () => modal.classList.remove('show');
-
-  $('#btn-settings')?.addEventListener('click', open);
-  $('#settings-close')?.addEventListener('click', close);
-  modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
-
-  // A11y: chiusura con Esc
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && modal.classList.contains('show')) close();
-  });
-
-  function populateManualPrices() {
-    const wrap = $('#manual-prices');
-    if (!wrap) return;
-    wrap.innerHTML = '';
-    const manuals = getManualPrices();
-    config.allocation.forEach((alloc) => {
-      const existing = manuals[alloc.ticker];
-      const age = getManualPriceAge(alloc.ticker);
-      const ageNote = age !== null ? ` <span class="muted">· aggiornato ${age}h fa</span>` : '';
-      const div = document.createElement('div');
-      div.className = 'field';
-      div.innerHTML = `
-        <label>${alloc.name}${ageNote}</label>
-        <input type="number" step="0.01" id="manual-${alloc.id}" placeholder="es. 131.50" value="${existing?.price ?? ''}" aria-label="Prezzo manuale ${alloc.ticker}">
-        <div class="field-help">Ticker: ${alloc.ticker} · Trova il prezzo attuale su <a href="https://www.justetf.com/it/etf-profile.html?isin=${alloc.isin}" target="_blank" rel="noopener">justETF</a></div>
-      `;
-      wrap.appendChild(div);
-    });
-  }
-
-  $('#settings-save')?.addEventListener('click', () => {
-    config.allocation.forEach(alloc => {
-      const el = document.getElementById(`manual-${alloc.id}`);
-      if (!el) return;
-      const v = parseFloat(el.value);
-      if (v > 0) setManualPrice(alloc.ticker, v);
-    });
-    close();
-    refresh(true);
-  });
-
-  $('#settings-clear-manual')?.addEventListener('click', () => {
-    if (confirm('Cancellare tutti i prezzi manuali? Tornerà ai fallback statici.')) {
-      clearManualPrices();
-      populateManualPrices();
-      refresh(true);
-    }
-  });
-
-  $('#settings-clear')?.addEventListener('click', () => {
-    if (confirm('Cancellare cache prezzi e Monte Carlo? (i prezzi manuali restano)')) {
-      clearAllCache();
-      clearMCCache();
-      location.reload();
-    }
-  });
-}
-
-// -------------------------------------------------------------------------
-// BOOST RECORDING
 // -------------------------------------------------------------------------
 function setupBoostButton() {
   const btn = $('#btn-record-boost');
@@ -654,6 +476,207 @@ function ensureTrendSummary() {
   const div = document.createElement('div');
   div.id = id;
   trendCanvas.parentElement.parentElement.appendChild(div);
+}
+
+
+// -------------------------------------------------------------------------
+// CHANGE PAC MODAL — modifica schedule strutturale
+// -------------------------------------------------------------------------
+function setupChangePAC() {
+  const btn = $('#btn-change-pac');
+  const modal = $('#changepac-modal');
+  const closeBtn = $('#changepac-close');
+  const saveBtn = $('#cp-save');
+  const resetBtn = $('#cp-reset');
+
+  if (!btn || !modal) return;
+
+  btn.addEventListener('click', () => {
+    renderCurrentSchedule();
+    const current = getPacSchedule();
+    const last = current[current.length - 1];
+    if ($('#cp-new-amount')) $('#cp-new-amount').value = last.amount;
+    if ($('#cp-start-month')) $('#cp-start-month').value = '0';
+    modal.classList.add('open');
+  });
+
+  if (closeBtn) closeBtn.addEventListener('click', () => modal.classList.remove('open'));
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) modal.classList.remove('open');
+  });
+
+  if (saveBtn) saveBtn.addEventListener('click', () => {
+    const amount = parseFloat($('#cp-new-amount').value);
+    const startMonth = parseInt($('#cp-start-month').value) || 0;
+
+    if (!amount || amount <= 0) {
+      alert('Inserisci un importo PAC valido (>€0)');
+      return;
+    }
+
+    const current = getPacSchedule();
+    let newSchedule;
+
+    if (startMonth === 0) {
+      // Reset totale: solo questo importo da subito
+      newSchedule = [{ startMonth: 0, amount }];
+    } else {
+      // Aggiungi segmento dopo i primi N mesi
+      const baseAmount = current[0].amount;
+      newSchedule = [
+        { startMonth: 0, amount: baseAmount },
+        { startMonth, amount },
+      ];
+    }
+
+    savePacSchedule(newSchedule);
+    modal.classList.remove('open');
+
+    // Forzo ricalcolo trend + MC
+    refresh(true);
+  });
+
+  if (resetBtn) resetBtn.addEventListener('click', () => {
+    if (!confirm('Reset PAC a €500 costante? Lo schedule attuale verrà perso.')) return;
+    resetPacSchedule();
+    modal.classList.remove('open');
+    refresh(true);
+  });
+}
+
+function renderCurrentSchedule() {
+  const box = $('#cp-current-schedule');
+  if (!box) return;
+  const schedule = getPacSchedule();
+  let html = '<span class="label">Schedule attuale</span>';
+  schedule.forEach((seg, i) => {
+    const yr = (seg.startMonth / 12).toFixed(1);
+    const next = schedule[i + 1];
+    const until = next ? `(fino a ${(next.startMonth / 12).toFixed(0)}a)` : '(in poi)';
+    const startStr = seg.startMonth === 0 ? 'Oggi' : `Dal mese ${seg.startMonth} (${yr}a)`;
+    html += `<div class="segment"><span>${startStr}</span><strong>€${seg.amount}/mese ${until}</strong></div>`;
+  });
+  box.innerHTML = html;
+}
+
+// -------------------------------------------------------------------------
+// INFLATION TOGGLE
+// -------------------------------------------------------------------------
+function setupInflationToggle() {
+  const toggle = $('#toggle-inflation');
+  if (!toggle) return;
+
+  // Restore preference
+  const saved = localStorage.getItem('pd_inflation_active') === 'true';
+  toggle.checked = saved;
+  inflationActive = saved;
+
+  toggle.addEventListener('change', () => {
+    inflationActive = toggle.checked;
+    localStorage.setItem('pd_inflation_active', inflationActive ? 'true' : 'false');
+    // Re-render trend (no need to re-run MC)
+    if (state.trendData) renderTrendSection();
+  });
+}
+
+// -------------------------------------------------------------------------
+// HORIZON TOGGLE (5/10/20 anni)
+// -------------------------------------------------------------------------
+function setupHorizonToggle() {
+  $$('.horizon-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const horizon = parseInt(btn.dataset.horizon);
+      const target = btn.dataset.target;
+      if (!horizon || !target) return;
+
+      // Update active state
+      $$(`.horizon-btn[data-target="${target}"]`).forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      horizonState[target] = horizon;
+
+      if (target === 'trend') {
+        // Ricalcola trend (veloce, no worker)
+        recomputeTrend();
+      } else if (target === 'mc') {
+        // Ricalcola MC (richiede worker)
+        recomputeMC();
+      }
+    });
+  });
+}
+
+// -------------------------------------------------------------------------
+// RECOMPUTE TREND (veloce)
+// -------------------------------------------------------------------------
+function recomputeTrend() {
+  if (!state.portfolio) return;
+  const schedule = getPacSchedule();
+  state.trendData = _TP({
+    horizonMonths: horizonState.trend,
+    currentValue: state.portfolio.totalValue,
+    pacSchedule: schedule,
+  });
+  renderTrendSection();
+}
+
+function renderTrendSection() {
+  if (!state.trendData) return;
+  const dataToShow = inflationActive ? deflateTrend(state.trendData, 0.02) : state.trendData;
+  renderTrendChart('#trend-chart', dataToShow, {
+    useLogScale: true,
+    currentValue: state.portfolio?.totalValue ?? 0,
+  });
+  renderTrendSummary(dataToShow);
+
+  // Update meta
+  const yrs = (horizonState.trend / 12).toFixed(0);
+  const metaEl = $('#trend-meta');
+  if (metaEl) {
+    metaEl.textContent = `${yrs} anni · ${inflationActive ? 'valori reali (defl. 2%/anno)' : 'valori nominali'}`;
+  }
+}
+
+function renderTrendSummary(data) {
+  const box = $('#trend-summary');
+  if (!box || !data || data.length === 0) return;
+  const last = data[data.length - 1];
+  const current = state.portfolio?.totalValue ?? data[0].p50;
+  const yrs = ((data.length - 1) / 12).toFixed(0);
+  const fmtK = (v) => v >= 1000 ? `€${(v/1000).toFixed(0)}k` : `€${v.toFixed(0)}`;
+
+  box.innerHTML = `
+    <div class="trend-summary-item"><span class="label">Oggi</span><span class="value">${fmtK(current)}</span></div>
+    <div class="trend-summary-item"><span class="label">${yrs}a — P50 atteso</span><span class="value p50">${fmtK(last.p50)}</span></div>
+    <div class="trend-summary-item"><span class="label">${yrs}a — range probabile</span><span class="value">${fmtK(last.p5)} – ${fmtK(last.p95)}</span></div>
+    <div class="trend-summary-item"><span class="label">${yrs}a — versato</span><span class="value contributed">${fmtK(last.contributed)}</span></div>
+  `;
+}
+
+// -------------------------------------------------------------------------
+// RECOMPUTE MC (con worker)
+// -------------------------------------------------------------------------
+async function recomputeMC() {
+  $('#mc-status').classList.remove('hidden');
+  $('#mc-table-wrap').classList.add('hidden');
+  $('#mc-progress').textContent = 'Ricalcolo Monte Carlo in corso...';
+
+  try {
+    const schedule = getPacSchedule();
+    const mc = await _MC({
+      onProgress: (cur, tot, label) => {
+        $('#mc-progress').textContent = `Strategia ${cur + 1}/${tot}: ${label}`;
+      },
+      forceRefresh: false,
+      currentValue: state.portfolio?.totalValue ?? 0,
+      horizonMonths: horizonState.mc,
+      pacSchedule: schedule,
+    });
+    state.mcResults = mc;
+    renderMCResults(mc);
+  } catch (err) {
+    $('#mc-status').innerHTML = `<div style="color:var(--accent-negative);padding:24px;text-align:center;">Errore: ${err.message}</div>`;
+  }
 }
 
 async function refresh(forceReload = false) {
@@ -694,6 +717,8 @@ async function refresh(forceReload = false) {
   // 5. Render
   renderHero(state.strategy);
   renderTracker(state.portfolio);
+  renderTerminalBar();
+  renderBoostHistory();
 
   // Aggiorna dropdown tax simulator quando cambiano i prezzi
   if (window._taxSimRefresh) window._taxSimRefresh();
@@ -702,17 +727,8 @@ async function refresh(forceReload = false) {
   renderHeaderStatus();
 
   // 6. Trend chart
-  state.trendData = generateTrendPaths({
-    horizonMonths: 60,
-    currentValue: state.portfolio.totalValue,
-    monthlyPAC: config.pac.baseMonthlyAmount,
-  });
-  renderTrendChart('#trend-chart', state.trendData, {
-    useLogScale: true,
-    currentValue: state.portfolio.totalValue,
-  });
-  // Aggiungi container summary subito dopo il canvas se non esiste
-  ensureTrendSummary();
+  // Trend con horizon variabile e schedule da localStorage
+  recomputeTrend();
 
   // 7. Monte Carlo (async)
   $('#mc-status').classList.remove('hidden');
@@ -720,12 +736,15 @@ async function refresh(forceReload = false) {
   $('#mc-progress').textContent = 'Inizializzazione Web Worker...';
 
   try {
-    const mc = await runMonteCarlo({
+    const schedule = getPacSchedule();
+    const mc = await _MC({
       onProgress: (current, total, label) => {
         $('#mc-progress').textContent = `Strategia ${current + 1}/${total}: ${label}`;
       },
       forceRefresh: forceReload,
       currentValue: state.portfolio.totalValue,
+      horizonMonths: horizonState.mc,
+      pacSchedule: schedule,
     });
     state.mcResults = mc;
     renderMCResults(mc);
@@ -771,9 +790,10 @@ function setupTooltips() {
 
 export async function initApp() {
   setupSettings();
-  setupTaxSim();
-  setupRealEstate();
   setupBoostButton();
+  setupChangePAC();
+  setupInflationToggle();
+  setupHorizonToggle();
   setupTooltips();
 
   $('#btn-refresh')?.addEventListener('click', () => refresh(true));
