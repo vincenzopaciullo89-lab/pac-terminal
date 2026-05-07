@@ -26,7 +26,7 @@ import {
 import { runMonteCarlo, generateTrendPaths, clearMCCache } from './monteCarloEngine.js';
 import { simulateSale } from './taxEngine.js';
 import { computeFlip, stressTest } from './realEstateEngine.js';
-import { renderTrendChart, renderMCDistributionChart, destroyAllCharts } from './charts.js';
+import { renderTrendChart, renderMCDistributionChart, renderMCProbabilityChart, destroyAllCharts } from './charts.js';
 
 // -------------------------------------------------------------------------
 // FORMATTING
@@ -276,7 +276,14 @@ function renderMCResults(results) {
   if (!tbody) return;
   tbody.innerHTML = '';
 
-  for (const s of results.strategies) {
+  // FILTRO: mostriamo solo 3 strategie chiave (rimossi PAC 400 costante e 530 costante)
+  // - PAC €500 costante: baseline di confronto
+  // - PAC €500 + tactical: strategia raccomandata
+  // - PAC €400 + tactical: alternativa conservativa
+  const KEEP_LABELS = ['PAC \u20ac500 costante', 'PAC \u20ac500 + tactical', 'PAC \u20ac400 + tactical'];
+  const filtered = results.strategies.filter(s => KEEP_LABELS.includes(s.label));
+
+  for (const s of filtered) {
     const tr = document.createElement('tr');
     if (s.id === 'pac500_tactical') tr.classList.add('highlight');
     tr.innerHTML = `
@@ -293,11 +300,29 @@ function renderMCResults(results) {
     tbody.appendChild(tr);
   }
 
-  $('#mc-meta').textContent = `${results.nSim.toLocaleString('it-IT')} simulazioni · ${results.horizonYears} anni · ${(results.elapsedMs / 1000).toFixed(1)}s`;
+  $('#mc-meta').textContent = `${results.nSim.toLocaleString('it-IT')} simulazioni \u00b7 ${results.horizonYears} anni \u00b7 ${(results.elapsedMs / 1000).toFixed(1)}s`;
   $('#mc-status').classList.add('hidden');
   $('#mc-table-wrap').classList.remove('hidden');
 
-  renderMCDistributionChart('#mc-chart', results);
+  // Render dei due grafici (filtra anche qui per coerenza)
+  renderMCDistributionChart('#mc-chart', results, KEEP_LABELS);
+
+  // NUOVO: grafico delle probabilit\u00e0 (creato dinamicamente se manca canvas)
+  ensureProbCanvas();
+  renderMCProbabilityChart('#mc-prob-chart', results, KEEP_LABELS);
+}
+
+// Crea canvas per grafico probabilit\u00e0 se non esiste in HTML
+function ensureProbCanvas() {
+  if ($('#mc-prob-chart')) return;
+  const mcChart = $('#mc-chart');
+  if (!mcChart) return;
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = 'margin-top:24px;padding-top:24px;border-top:1px solid var(--border-subtle);height:320px;position:relative;';
+  const canvas = document.createElement('canvas');
+  canvas.id = 'mc-prob-chart';
+  wrapper.appendChild(canvas);
+  mcChart.parentElement.parentElement.appendChild(wrapper);
 }
 
 // -------------------------------------------------------------------------
@@ -620,6 +645,17 @@ function setupBoostButton() {
 // -------------------------------------------------------------------------
 // MAIN REFRESH
 // -------------------------------------------------------------------------
+
+function ensureTrendSummary() {
+  const trendCanvas = $('#trend-chart');
+  if (!trendCanvas) return;
+  const id = 'trend-chart-summary';
+  if (document.getElementById(id)) return;
+  const div = document.createElement('div');
+  div.id = id;
+  trendCanvas.parentElement.parentElement.appendChild(div);
+}
+
 async function refresh(forceReload = false) {
   renderHeaderStatus();
   destroyAllCharts();
@@ -671,7 +707,12 @@ async function refresh(forceReload = false) {
     currentValue: state.portfolio.totalValue,
     monthlyPAC: config.pac.baseMonthlyAmount,
   });
-  renderTrendChart('#trend-chart', state.trendData);
+  renderTrendChart('#trend-chart', state.trendData, {
+    useLogScale: true,
+    currentValue: state.portfolio.totalValue,
+  });
+  // Aggiungi container summary subito dopo il canvas se non esiste
+  ensureTrendSummary();
 
   // 7. Monte Carlo (async)
   $('#mc-status').classList.remove('hidden');
@@ -691,16 +732,49 @@ async function refresh(forceReload = false) {
   } catch (err) {
     $('#mc-status').innerHTML = `<div style="color:var(--accent-negative);padding:24px;text-align:center;">Errore Monte Carlo: ${err.message}</div>`;
   }
+
+  // Re-applica tooltip dopo render (gli elementi possono essere ricreati)
+  setupTooltips();
 }
 
 // -------------------------------------------------------------------------
 // INIT
 // -------------------------------------------------------------------------
+
+// -------------------------------------------------------------------------
+// TOOLTIPS — spiegazioni visibili al hover su metriche complesse
+// -------------------------------------------------------------------------
+function setupTooltips() {
+  // Mappa: selettore elemento da arricchire \u2192 testo del tooltip
+  const TOOLTIPS = {
+    // Hero card metrics
+    '[data-metric="zscore"]': 'Z-score 21d: di quanto il rendimento del mese si discosta dalla media storica, in deviazioni standard. |z|<1 normale, |z|>2 inusuale, |z|>3 eccezionale.',
+    '[data-metric="ma200dev"]': 'Deviazione dalla media mobile 200 giorni. >+10% trend rialzista esteso, <-5% inizio drawdown significativo.',
+    '[data-metric="vol60d"]': 'Volatilit\u00e0 annualizzata sugli ultimi 60 giorni. <15% calmo, 15-20% normale, >25% stress.',
+    '[data-metric="dd12m"]': 'Drawdown 12 mesi: scostamento percentuale dal massimo recente. \u00c8 il trigger primario per attivare il boost del PAC.',
+    '[data-metric="ddath"]': 'Drawdown dal massimo storico (all-time-high) del periodo disponibile.',
+    '[data-metric="boostytd"]': 'Numero di mesi in cui hai gi\u00e0 fatto un boost quest\'anno. Cap massimo: 6/anno per evitare over-trading.',
+    // Bottone boost
+    '#btn-record-boost': 'Click solo quando hai effettivamente fatto un bonifico extra rispetto al PAC base. Aggiorna il contatore BOOST YTD.',
+  };
+
+  for (const [selector, text] of Object.entries(TOOLTIPS)) {
+    document.querySelectorAll(selector).forEach(el => {
+      if (!el.dataset.tooltipAttached) {
+        el.title = text;  // fallback nativo
+        el.dataset.tooltipAttached = '1';
+        el.style.cursor = 'help';
+      }
+    });
+  }
+}
+
 export async function initApp() {
   setupSettings();
   setupTaxSim();
   setupRealEstate();
   setupBoostButton();
+  setupTooltips();
 
   $('#btn-refresh')?.addEventListener('click', () => refresh(true));
 
