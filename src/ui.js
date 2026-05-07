@@ -533,6 +533,29 @@ function setupBoostButton() {
 }
 
 // -------------------------------------------------------------------------
+// BOOST HISTORY
+// -------------------------------------------------------------------------
+function renderBoostHistory() {
+  const box = $('#boost-history');
+  if (!box) return;
+  const stats = getBoostStats();
+  if (!stats || stats.monthsUsed === 0) {
+    box.innerHTML = '<span class="muted small">Nessun boost registrato in YTD</span>';
+    return;
+  }
+  box.innerHTML = `
+    <div class="boost-entry">
+      <span>Boost YTD</span>
+      <strong>${stats.monthsUsed}/${config.pac.capBoostMonthsPerYear}</strong>
+    </div>
+    <div class="boost-entry">
+      <span>Extra versato</span>
+      <strong>${fmt.eur(stats.totalExtra)}</strong>
+    </div>
+  `;
+}
+
+// -------------------------------------------------------------------------
 // MAIN REFRESH
 // -------------------------------------------------------------------------
 
