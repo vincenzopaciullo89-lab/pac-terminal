@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
+<meta name="theme-color" content="#0A1A20">
+<title>PAC Terminal · Real Estate IRR</title>
+<link rel="stylesheet" href="styles/styles.css">
+<link rel="stylesheet" href="styles/v3-additions.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230A1A20'/%3E%3Ccircle cx='16' cy='16' r='5' fill='%232DD4BF'/%3E%3C/svg%3E">
+</head>
+
+<body>
+<div class="app">
+
+<header class="app-header">
+  <div class="container header-inner">
+    <div class="brand">
+      <span class="brand-mark">PAC <em>Terminal</em></span>
+      <span class="brand-tagline">·  Real Estate IRR</span>
+    </div>
+    <nav class="header-nav">
+      <a href="index.html" class="nav-link">Dashboard</a>
+      <a href="tax.html" class="nav-link">Tax</a>
+      <a href="realestate.html" class="nav-link active">Real Estate</a>
+    </nav>
+  </div>
+</header>
+
+<main class="app-main">
+<div class="container">
+
+<section class="section">
+  <div class="section-header">
+    <div>
+      <span class="section-num">Real Estate</span>
+      <h2 class="section-title">IRR <em>operazione immobiliare</em></h2>
+    </div>
+    <span class="section-meta">costi Italia · plus 26% se vendita ≤5a</span>
+  </div>
+
+  <div class="card" style="max-width: 920px;">
+    <div class="card-header">
+      <h3 class="card-title">Inputs operazione</h3>
+      <span class="card-meta">flip o buy-to-let breve</span>
+    </div>
+
+    <form id="re-form" onsubmit="return false;">
+      <div class="field-row">
+        <div class="field">
+          <label for="re-purchase">Prezzo acquisto (€)</label>
+          <input type="number" id="re-purchase" step="1000" value="100000">
+        </div>
+        <div class="field">
+          <label for="re-sale">Prezzo vendita (€)</label>
+          <input type="number" id="re-sale" step="1000" value="150000">
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="re-duration">Durata (mesi)</label>
+          <input type="number" id="re-duration" min="1" max="60" value="6">
+        </div>
+        <div class="field">
+          <label for="re-renovation">Ristrutturazione (€)</label>
+          <input type="number" id="re-renovation" step="500" value="0">
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="re-cadastral">Valore catastale (€) <span class="muted" style="text-transform:none;">opz.</span></label>
+          <input type="number" id="re-cadastral" step="1000" placeholder="se vuoto, stima 60% prezzo">
+          <div class="field-help">Se omesso: stimato come 60% del prezzo. Trovi il dato reale sulla visura catastale.</div>
+        </div>
+        <div class="field">
+          <label for="re-holding">Holding €/mese</label>
+          <input type="number" id="re-holding" step="50" value="200">
+          <div class="field-help">IMU, condominio, utenze base</div>
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label class="checkbox-label">
+            <input type="checkbox" id="re-firsthome"> Prima casa (registro 2%)
+          </label>
+        </div>
+        <div class="field">
+          <label class="checkbox-label">
+            <input type="checkbox" id="re-newbuilding"> Da costruttore (IVA)
+          </label>
+        </div>
+      </div>
+    </form>
+
+    <div id="re-result" class="result-box">
+      <div class="muted">Compila il form per calcolare l'IRR.</div>
+    </div>
+
+    <div id="re-stress" style="margin-top:16px;"></div>
+  </div>
+</section>
+
+</div>
+</main>
+
+<footer class="app-footer">
+  <div class="container footer-inner">
+    <div>© 2026 · PAC Terminal · Personal use only</div>
+    <div>Browser-only · No cloud · No tracking</div>
+    <div>Not financial advice</div>
+  </div>
+</footer>
+
+</div>
+
+<script type="module">
+import { computeFlip, stressTest } from './src/realEstateEngine.js';
+
+const $ = (sel) => document.querySelector(sel);
+const fmt = {
+  eur(n, dp = 0) {
+    if (n === null || n === undefined || isNaN(n)) return '—';
+    return new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', minimumFractionDigits: dp, maximumFractionDigits: dp }).format(n);
+  },
+  pct(n, dp = 1) {
+    if (n === null || n === undefined || isNaN(n)) return '—';
+    return `${n > 0 ? '+' : ''}${(n * 100).toFixed(dp)}%`;
+  },
+};
+
+const calc = () => {
+  const inputs = {
+    purchasePrice: parseFloat($('#re-purchase').value) || 0,
+    salePrice: parseFloat($('#re-sale').value) || 0,
+    holdingMonths: parseInt($('#re-duration').value) || 1,
+    renovationCost: parseFloat($('#re-renovation').value) || 0,
+    monthlyHolding: parseFloat($('#re-holding').value) || 0,
+    cadastralValue: parseFloat($('#re-cadastral').value) || null,
+    firstHome: $('#re-firsthome').checked,
+    newBuilding: $('#re-newbuilding').checked,
+  };
+
+  if (inputs.purchasePrice <= 0 || inputs.salePrice <= 0) {
+    $('#re-result').innerHTML = '<div class="muted">Compila prezzi per il calcolo.</div>';
+    return;
+  }
+
+  const r = computeFlip(inputs);
+  const out = $('#re-result');
+  if (!out) return;
+
+  let cls = 'result-box';
+  let verdict;
+  if (r.irrAnnualized > 0.20) { cls += ' positive'; verdict = 'OPERAZIONE ECCELLENTE'; }
+  else if (r.irrAnnualized > 0.12) { cls += ' positive'; verdict = 'OPERAZIONE BUONA'; }
+  else if (r.irrAnnualized > 0.06) { verdict = 'OPERAZIONE MARGINALE — verifica il prezzo realistico'; }
+  else if (r.irrAnnualized > 0) { cls += ' warning'; verdict = 'OPERAZIONE INSUFFICIENTE — sotto rendimento PAC ETF atteso'; }
+  else { cls += ' warning'; verdict = 'OPERAZIONE IN PERDITA'; }
+
+  out.className = cls;
+  out.innerHTML = `
+    <div class="result-verdict">${verdict} — verifica realismo del prezzo di vendita</div>
+    <div style="display:grid;grid-template-columns:1fr auto;gap:8px 16px;">
+      <span class="muted">Valore catastale</span><span class="text-right">${fmt.eur(r.cadastralUsed)} ${r.cadastralEstimated ? '<span class=\"muted\">(stimato 60% prezzo)</span>' : ''}</span>
+      <span class="muted">Capitale impiegato</span><span class="text-right">${fmt.eur(r.capitalDeployed)}</span>
+      <span class="muted">Profitto netto</span>
+      <span class="text-right ${r.netProfit >= 0 ? 'positive' : 'negative'}">${fmt.eur(r.netProfit)}</span>
+      <span class="muted">RoC</span><span class="text-right ${r.roc >= 0 ? 'positive' : 'negative'}">${fmt.pct(r.roc)}</span>
+      <strong class="bright">IRR annualizzato</strong>
+      <strong class="text-right ${r.irrAnnualized >= 0 ? 'positive' : 'negative'}">${fmt.pct(r.irrAnnualized)}</strong>
+      <span class="muted">VWCE atteso stesso periodo</span>
+      <span class="text-right">${fmt.eur(r.vwceExpected)}</span>
+      <span class="muted">Vantaggio vs VWCE</span>
+      <span class="text-right ${r.advantageVsVWCE >= 0 ? 'positive' : 'negative'}">${fmt.eur(r.advantageVsVWCE)}</span>
+      <span class="muted">Break-even prezzo vendita</span>
+      <span class="text-right">${fmt.eur(r.breakEvenSalePrice)}</span>
+    </div>
+  `;
+
+  // Stress test
+  const stress = stressTest(inputs);
+  const stressBox = $('#re-stress');
+  if (stressBox && stress) {
+    let html = '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border-subtle);font-size:12px;">';
+    html += '<strong style="color:var(--text-bright)">Stress test:</strong><br><br>';
+    html += '<div style="display:grid;grid-template-columns:1fr auto auto;gap:6px 12px;">';
+    html += '<span class="muted">Scenario</span><span class="muted text-right">IRR annuo</span><span class="muted text-right">Profitto netto</span>';
+    stress.forEach(s => {
+      const irrCls = s.irrAnnualized > 0.12 ? 'positive' : s.irrAnnualized > 0.06 ? '' : 'negative';
+      html += `<span>${s.label}</span><span class="text-right ${irrCls}">${fmt.pct(s.irrAnnualized)}</span><span class="text-right">${fmt.eur(s.netProfit)}</span>`;
+    });
+    html += '</div></div>';
+    stressBox.innerHTML = html;
+  }
+};
+
+['#re-purchase', '#re-sale', '#re-duration', '#re-renovation', '#re-holding', '#re-cadastral'].forEach(id => {
+  $(id)?.addEventListener('input', calc);
+});
+['#re-firsthome', '#re-newbuilding'].forEach(id => {
+  $(id)?.addEventListener('change', calc);
+});
+
+calc();
+</script>
+
+</body>
+</html>

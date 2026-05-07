@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
+<meta name="theme-color" content="#0A1A20">
+<title>PAC Terminal · Tax Simulator</title>
+<link rel="stylesheet" href="styles/styles.css">
+<link rel="stylesheet" href="styles/v3-additions.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230A1A20'/%3E%3Ccircle cx='16' cy='16' r='5' fill='%232DD4BF'/%3E%3C/svg%3E">
+</head>
+
+<body>
+<div class="app">
+
+<header class="app-header">
+  <div class="container header-inner">
+    <div class="brand">
+      <span class="brand-mark">PAC <em>Terminal</em></span>
+      <span class="brand-tagline">·  Tax Simulator</span>
+    </div>
+    <nav class="header-nav">
+      <a href="index.html" class="nav-link">Dashboard</a>
+      <a href="tax.html" class="nav-link active">Tax</a>
+      <a href="realestate.html" class="nav-link">Real Estate</a>
+    </nav>
+  </div>
+</header>
+
+<main class="app-main">
+<div class="container">
+
+<section class="section">
+  <div class="section-header">
+    <div>
+      <span class="section-num">Tax</span>
+      <h2 class="section-title">Simulatore <em>vendita ETF</em></h2>
+    </div>
+    <span class="section-meta">regime amministrato · 26%</span>
+  </div>
+
+  <div class="card" style="max-width: 720px;">
+    <div class="card-header">
+      <h3 class="card-title">Simula vendita</h3>
+      <span class="card-meta">auto-fill da portafoglio</span>
+    </div>
+
+    <div class="field">
+      <label for="tax-etf-select">ETF da vendere</label>
+      <select id="tax-etf-select" aria-label="Seleziona ETF">
+        <option value="">— Caricamento portafoglio —</option>
+      </select>
+      <div class="field-help">Selezionare un ETF precompila PMC e prezzo correnti dal portafoglio</div>
+    </div>
+
+    <div class="field">
+      <label for="tax-amount">Importo da vendere (€)</label>
+      <input type="number" id="tax-amount" step="100" placeholder="es. 25000">
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label for="tax-cost">PMC (€/quota)</label>
+        <input type="number" id="tax-cost" step="0.01" placeholder="es. 110.50">
+      </div>
+      <div class="field">
+        <label for="tax-price">Prezzo oggi (€/quota)</label>
+        <input type="number" id="tax-price" step="0.01" placeholder="es. 124.50">
+      </div>
+    </div>
+
+    <div id="tax-result" class="result-box">
+      <div class="muted">Seleziona un ETF dal menu e inserisci un importo per simulare la vendita.</div>
+    </div>
+  </div>
+
+  <div class="card" style="max-width: 720px; margin-top: 24px;">
+    <div class="card-header">
+      <h3 class="card-title">Note</h3>
+    </div>
+    <div style="font-size: 12px; color: var(--text-muted); line-height: 1.6;">
+      Aliquota 26% applicata su plusvalenza realizzata (regime amministrato Italia). Il calcolo del costo opportunità a 5/10/20 anni assume rendimento atteso 7,6% annuo (blended VWCE+CSNDX) e parte dal netto disponibile dopo tassa.
+      <br><br>
+      Le quote calcolate sono basate sull'ipotesi FIFO. Trade Republic usa LIFO/PMC, quindi i numeri reali possono discostarsi leggermente.
+    </div>
+  </div>
+</section>
+
+</div>
+</main>
+
+<footer class="app-footer">
+  <div class="container footer-inner">
+    <div>© 2026 · PAC Terminal · Personal use only</div>
+    <div>Browser-only · No cloud · No tracking</div>
+    <div>Not financial advice</div>
+  </div>
+</footer>
+
+</div>
+
+<script type="module">
+import { computePortfolio } from './src/portfolioEngine.js';
+import { simulateSale } from './src/taxEngine.js';
+import { getAllPrices } from './src/priceProvider.js';
+import { config } from './src/config.js';
+
+const $ = (sel) => document.querySelector(sel);
+const fmt = {
+  eur(n, dp = 0) {
+    if (n === null || n === undefined || isNaN(n)) return '—';
+    return new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', minimumFractionDigits: dp, maximumFractionDigits: dp }).format(n);
+  },
+  num(n, dp = 2) {
+    if (n === null || n === undefined || isNaN(n)) return '—';
+    return new Intl.NumberFormat('it-IT', { minimumFractionDigits: dp, maximumFractionDigits: dp }).format(n);
+  },
+  pct(n, dp = 1) {
+    if (n === null || n === undefined || isNaN(n)) return '—';
+    return `${n > 0 ? '+' : ''}${(n * 100).toFixed(dp)}%`;
+  },
+};
+
+let portfolio = null;
+
+async function loadPortfolio() {
+  try {
+    const prices = await getAllPrices(false);
+    portfolio = computePortfolio(prices);
+    populateETFSelect();
+  } catch (err) {
+    console.error('Tax page: errore caricamento portafoglio:', err);
+    const select = $('#tax-etf-select');
+    if (select) {
+      select.innerHTML = '<option value="">— Errore caricamento. Vai prima alla Dashboard. —</option>';
+    }
+  }
+}
+
+function populateETFSelect() {
+  const select = $('#tax-etf-select');
+  if (!select || !portfolio?.holdings) return;
+
+  select.innerHTML = '<option value="">— Seleziona ETF (auto-fill PMC e prezzo) —</option>';
+
+  portfolio.holdings.forEach(h => {
+    if (h.units <= 0) return;
+    const opt = document.createElement('option');
+    opt.value = h.isin;
+    const shortName = h.name.split(' ').slice(0, 4).join(' ');
+    const legacyTag = h.isLegacy ? ' [legacy]' : '';
+    opt.textContent = `${shortName}${legacyTag} — PMC €${h.avgCost.toFixed(2)} · Prezzo €${h.currentPrice.toFixed(2)}`;
+    opt.dataset.pmc = h.avgCost;
+    opt.dataset.price = h.currentPrice;
+    opt.dataset.units = h.units;
+    opt.dataset.value = h.currentValue;
+    opt.dataset.pnl = h.pnlAbs;
+    select.appendChild(opt);
+  });
+}
+
+function onETFSelect() {
+  const select = $('#tax-etf-select');
+  const opt = select?.selectedOptions?.[0];
+  if (!opt || !opt.value) return;
+  const pmc = parseFloat(opt.dataset.pmc);
+  const price = parseFloat(opt.dataset.price);
+  if (!isNaN(pmc)) $('#tax-cost').value = pmc.toFixed(2);
+  if (!isNaN(price)) $('#tax-price').value = price.toFixed(2);
+  calc();
+}
+
+function calc() {
+  const amt = parseFloat($('#tax-amount').value);
+  const cost = parseFloat($('#tax-cost').value);
+  const price = parseFloat($('#tax-price').value);
+  const out = $('#tax-result');
+  if (!out) return;
+
+  if (!amt || amt <= 0) {
+    out.className = 'result-box';
+    const select = $('#tax-etf-select');
+    const opt = select?.selectedOptions?.[0];
+    if (opt && opt.value) {
+      const value = parseFloat(opt.dataset.value);
+      const pnl = parseFloat(opt.dataset.pnl);
+      const taxIfFull = pnl > 0 ? pnl * 0.26 : 0;
+      out.innerHTML = `
+        <div class="muted" style="margin-bottom:12px;">Inserisci un importo per simulare la vendita parziale.</div>
+        <div style="display:grid;grid-template-columns:1fr auto;gap:6px 16px;font-size:12px;">
+          <span class="muted">Posizione attuale</span><span class="text-right">${fmt.eur(value)}</span>
+          <span class="muted">Plus/minus latente</span>
+          <span class="text-right ${pnl >= 0 ? 'positive' : 'negative'}">${fmt.eur(pnl)}</span>
+          <span class="muted">Se vendessi TUTTO oggi, tassa</span>
+          <span class="text-right negative">${fmt.eur(taxIfFull)}</span>
+        </div>
+      `;
+    } else {
+      out.innerHTML = '<div class="muted">Seleziona un ETF dal menu e inserisci un importo per simulare la vendita.</div>';
+    }
+    return;
+  }
+
+  const r = simulateSale(amt, cost || 0, price || 1);
+  if (!r) return;
+
+  let cls = 'result-box';
+  if (r.realizedGain < 0) cls += ' positive';
+  else if (r.effectiveRate > 0.10) cls += ' warning';
+
+  out.className = cls;
+  out.innerHTML = `
+    <div class="result-verdict">${
+      r.realizedGain > 0
+        ? `Vendita con plusvalenza · netto disponibile <strong>${fmt.eur(r.netProceeds)}</strong>`
+        : `Vendita con minusvalenza · nessuna tassa, accumuli credito`
+    }</div>
+    <div style="display:grid;grid-template-columns:1fr auto;gap:8px 16px;">
+      <span class="muted">Importo lordo</span><span class="text-right">${fmt.eur(r.saleAmount)}</span>
+      <span class="muted">Quote da vendere</span><span class="text-right">${fmt.num(r.unitsToSell, 4)}</span>
+      <span class="muted">Costo basis</span><span class="text-right">${fmt.eur(r.costBasisSold)}</span>
+      <span class="muted">${r.realizedGain >= 0 ? 'Plusvalenza' : 'Minusvalenza'}</span>
+      <span class="text-right ${r.realizedGain >= 0 ? 'positive' : 'negative'}">${fmt.eur(r.realizedGain)}</span>
+      <span class="muted">Tassa 26%</span><span class="text-right negative">${fmt.eur(r.taxDue)}</span>
+      <span class="bright"><strong>Netto disponibile</strong></span>
+      <span class="text-right bright"><strong>${fmt.eur(r.netProceeds)}</strong></span>
+      <span class="muted" style="margin-top:8px">Aliquota effettiva</span>
+      <span class="text-right" style="margin-top:8px">${fmt.pct(r.effectiveRate, 2)}</span>
+    </div>
+    <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border-subtle);font-size:11px;">
+      <strong style="color:var(--text-bright)">Costo opportunità del prelievo (vs PAC ETF):</strong><br>
+      <span class="muted">5 anni:</span> ${fmt.eur(r.oppCost5y)}<br>
+      <span class="muted">10 anni:</span> ${fmt.eur(r.oppCost10y)}<br>
+      <span class="muted">20 anni:</span> ${fmt.eur(r.oppCost20y)}
+    </div>
+    ${r.warnings.length ? `<div style="margin-top:16px;font-size:11px;color:var(--accent-warning)">${r.warnings.map(w => '⚠️ ' + w).join('<br>')}</div>` : ''}
+  `;
+}
+
+['#tax-amount', '#tax-cost', '#tax-price'].forEach(id => {
+  $(id)?.addEventListener('input', calc);
+});
+$('#tax-etf-select')?.addEventListener('change', onETFSelect);
+
+loadPortfolio();
+</script>
+
+</body>
+</html>

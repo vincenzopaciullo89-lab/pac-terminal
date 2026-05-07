@@ -1,0 +1,311 @@
+/* =============================================================================
+   v3 Additions — terminal-bar, hero compatto, modali, link cards
+   ============================================================================= */
+
+/* Terminal bar (Bloomberg style) */
+.terminal-bar {
+  background: linear-gradient(180deg, #061117 0%, #0A1A20 100%);
+  border-bottom: 1px solid #1A3A47;
+  padding: 8px 0;
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 11px;
+  letter-spacing: 0.4px;
+}
+.terminal-inner {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  overflow-x: auto;
+}
+.terminal-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+}
+.t-label {
+  color: #557580;
+  text-transform: uppercase;
+  font-size: 10px;
+  font-weight: 500;
+}
+.t-value {
+  color: var(--text-bright, #C7DDE5);
+  font-weight: 600;
+}
+.t-value.positive { color: var(--accent-positive, #2DD4BF); }
+.t-value.negative { color: var(--accent-negative, #F87171); }
+.t-value.warning { color: var(--accent-warning, #FBBF24); }
+.terminal-sep {
+  width: 1px;
+  height: 14px;
+  background: #1A3A47;
+  flex-shrink: 0;
+}
+
+/* Header navigation (Tax / RealEstate / Dashboard) */
+.header-nav {
+  display: flex;
+  gap: 4px;
+  margin-left: 24px;
+}
+.nav-link {
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-muted, #7C9AA7);
+  padding: 6px 12px;
+  border-radius: 4px;
+  text-decoration: none;
+  transition: all 0.15s;
+}
+.nav-link:hover {
+  color: var(--text-bright, #C7DDE5);
+  background: rgba(45, 212, 191, 0.06);
+}
+.nav-link.active {
+  color: var(--accent-positive, #2DD4BF);
+  background: rgba(45, 212, 191, 0.1);
+}
+
+/* Hero card compatta nella side panel */
+.hero-card-compact {
+  border-left: 3px solid var(--accent-positive, #2DD4BF);
+}
+.hero-headline-compact {
+  font-family: var(--font-display, 'Spectral', serif);
+  font-size: 18px;
+  line-height: 1.3;
+  color: var(--text-bright, #C7DDE5);
+  margin: 12px 0 6px;
+}
+.hero-card-compact .hero-rationale {
+  font-size: 12px;
+  color: var(--text-muted, #7C9AA7);
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+.amounts-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 12px 0;
+}
+.amount-pill {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-subtle, #1A3A47);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  display: inline-flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.amount-pill.highlight {
+  background: rgba(45, 212, 191, 0.08);
+  border-color: rgba(45, 212, 191, 0.3);
+}
+.amount-pill .muted { font-size: 10px; }
+.amount-pill strong { color: var(--text-bright, #C7DDE5); font-weight: 600; }
+
+/* Action panel */
+.action-panel {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-subtle, #1A3A47);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.action-btn {
+  width: 100%;
+  justify-content: center;
+}
+.boost-history {
+  margin-top: 8px;
+  font-size: 11px;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  color: var(--text-muted, #7C9AA7);
+}
+.boost-history .boost-entry {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+  border-bottom: 1px dashed rgba(124, 154, 167, 0.15);
+}
+.boost-history .boost-entry:last-child { border-bottom: none; }
+.boost-history strong { color: var(--text-bright, #C7DDE5); }
+.boost-history .small { font-size: 10px; }
+
+/* Latent tax banner */
+.latent-tax-banner {
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: rgba(251, 191, 36, 0.04);
+  border: 1px solid rgba(251, 191, 36, 0.15);
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.latent-tax-banner .separator { color: rgba(124, 154, 167, 0.4); }
+.latent-tax-banner strong { color: var(--text-bright, #C7DDE5); font-weight: 600; }
+.latent-tax-banner .warning { color: var(--accent-warning, #FBBF24); }
+
+/* Section controls (toggle inflation, horizon) */
+.section-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.toggle-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 10px;
+  color: var(--text-muted, #7C9AA7);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.toggle-inline input { cursor: pointer; }
+.horizon-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border-subtle, #1A3A47);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.horizon-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted, #7C9AA7);
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 11px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-right: 1px solid var(--border-subtle, #1A3A47);
+}
+.horizon-btn:last-child { border-right: none; }
+.horizon-btn:hover { background: rgba(255, 255, 255, 0.03); color: var(--text-bright, #C7DDE5); }
+.horizon-btn.active {
+  background: rgba(45, 212, 191, 0.12);
+  color: var(--accent-positive, #2DD4BF);
+}
+
+/* Trend summary */
+.trend-summary {
+  margin-top: 16px;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 11px;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+}
+.trend-summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.trend-summary-item .label {
+  color: var(--text-muted, #7C9AA7);
+  text-transform: uppercase;
+  font-size: 9px;
+  letter-spacing: 0.5px;
+}
+.trend-summary-item .value {
+  color: var(--text-bright, #C7DDE5);
+  font-size: 13px;
+  font-weight: 600;
+}
+.trend-summary-item .value.p50 { color: var(--accent-positive, #2DD4BF); }
+.trend-summary-item .value.contributed { color: #FBBF24; }
+
+/* Tools link cards */
+.tools-link-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+@media (max-width: 768px) {
+  .tools-link-grid { grid-template-columns: 1fr; }
+}
+.tool-link-card {
+  display: block;
+  padding: 24px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-subtle, #1A3A47);
+  border-radius: 8px;
+  text-decoration: none;
+  transition: all 0.15s;
+  position: relative;
+}
+.tool-link-card:hover {
+  background: rgba(45, 212, 191, 0.04);
+  border-color: rgba(45, 212, 191, 0.3);
+  transform: translateY(-1px);
+}
+.tool-link-num {
+  position: absolute;
+  top: 16px;
+  right: 20px;
+  font-size: 24px;
+  color: var(--accent-positive, #2DD4BF);
+  font-family: var(--font-display, 'Spectral', serif);
+}
+.tool-link-title {
+  font-family: var(--font-display, 'Spectral', serif);
+  font-size: 20px;
+  color: var(--text-bright, #C7DDE5);
+  margin-bottom: 8px;
+}
+.tool-link-desc {
+  font-size: 13px;
+  color: var(--text-muted, #7C9AA7);
+  line-height: 1.5;
+}
+
+/* Schedule display (in change PAC modal) */
+.schedule-display {
+  margin: 16px 0;
+  padding: 12px 14px;
+  background: rgba(45, 212, 191, 0.04);
+  border: 1px solid rgba(45, 212, 191, 0.15);
+  border-radius: 6px;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 11px;
+}
+.schedule-display .label {
+  color: var(--text-muted, #7C9AA7);
+  text-transform: uppercase;
+  font-size: 10px;
+  margin-bottom: 6px;
+  display: block;
+}
+.schedule-display .segment {
+  padding: 4px 0;
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px dashed rgba(124, 154, 167, 0.15);
+}
+.schedule-display .segment:last-child { border-bottom: none; }
+.schedule-display .segment strong { color: var(--text-bright, #C7DDE5); }
+
+/* Helper class */
+.small { font-size: 10px; }

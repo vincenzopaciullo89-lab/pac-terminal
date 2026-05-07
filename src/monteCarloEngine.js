@@ -1,14 +1,16 @@
 // =============================================================================
-// MONTE CARLO ENGINE — Wrapper for Worker (FINAL)
+// MONTE CARLO ENGINE v3 — supporto schedule + horizon variabile + inflation
 // =============================================================================
-// Lancia il Worker con 50.000 sim e ritorna una Promise con i risultati.
-// Cache locale 24h per evitare ricomputazione inutile.
+// Modifiche v3:
+//   - Accetta pacSchedule da UI (PAC variabile nel tempo)
+//   - Accetta horizonMonths (5, 10, 20 anni)
+//   - generateTrendPaths supporta schedule e ritorna anche valori reali (deflated)
 // =============================================================================
 
 import { config } from './config.js';
 
-const MC_CACHE_KEY = 'pd_mc_results_v2';
-const MC_CACHE_TS_KEY = 'pd_mc_results_ts_v2';
+const MC_CACHE_KEY = 'pd_mc_results_v3';
+const MC_CACHE_TS_KEY = 'pd_mc_results_ts_v3';
 const MC_CACHE_HOURS = 24;
 
 const safeStorage = {
@@ -21,7 +23,7 @@ function configHash(params) {
   const str = JSON.stringify({
     months: params.months, nSim: params.nSim,
     mu: params.mu, sigma: params.sigma, pv0: params.pv0,
-    tiers: params.tiers,
+    tiers: params.tiers, pacSchedule: params.pacSchedule,
   });
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
@@ -51,7 +53,12 @@ function setCachedMC(key, results) {
 }
 
 /**
- * Esegue Monte Carlo, ritorna Promise<results>.
+ * Esegue Monte Carlo. Accetta pacSchedule per PAC variabile.
+ * Esempi:
+ *   pacSchedule = null → usa monthlyPAC (default 500)
+ *   pacSchedule = [{startMonth: 0, amount: 500}] → costante €500
+ *   pacSchedule = [{startMonth: 0, amount: 500}, {startMonth: 60, amount: 300}]
+ *     → €500 per primi 5 anni, €300 dopo
  */
 export function runMonteCarlo(options = {}) {
   const {
@@ -60,9 +67,10 @@ export function runMonteCarlo(options = {}) {
     horizonMonths = 240,
     currentValue = 0,
     nSim = config.monteCarlo.nSimulations,
+    pacSchedule = null,
+    monthlyPAC = 500,
   } = options;
 
-  // Calcola mu/sigma blended dell'allocazione target
   const muBlended = config.allocation.reduce((s, a) => s + a.weight * a.assumedReturnAnnual, 0);
   const sigmas = config.allocation.map(a => a.assumedVolAnnual);
   const weights = config.allocation.map(a => a.weight);
@@ -77,6 +85,11 @@ export function runMonteCarlo(options = {}) {
   const sigmaBlended = Math.sqrt(varBlended);
   const terBlended = config.allocation.reduce((s, a) => s + a.weight * a.ter, 0);
 
+  // Normalizza schedule
+  const schedule = (Array.isArray(pacSchedule) && pacSchedule.length > 0)
+    ? pacSchedule.filter(s => s.amount > 0).sort((a, b) => a.startMonth - b.startMonth)
+    : [{ startMonth: 0, amount: monthlyPAC }];
+
   const params = {
     nSim,
     months: horizonMonths,
@@ -86,6 +99,8 @@ export function runMonteCarlo(options = {}) {
     pv0: typeof currentValue === 'number' && !isNaN(currentValue) ? currentValue : 0,
     tiers: config.strategyTiers,
     capPerYear: config.pac.capBoostMonthsPerYear,
+    pacSchedule: schedule,
+    monthlyPAC,
   };
 
   const cacheKey = configHash(params);
@@ -127,10 +142,29 @@ export function runMonteCarlo(options = {}) {
 
 /**
  * Genera percorsi P5/P25/P50/P75/P95 per il grafico trend.
+ * Supporta pacSchedule per coerenza con MC.
  */
 export function generateTrendPaths(options = {}) {
-  const { horizonMonths = 60, currentValue = 0, monthlyPAC = 500 } = options;
+  const {
+    horizonMonths = 60,
+    currentValue = 0,
+    monthlyPAC = 500,
+    pacSchedule = null,
+  } = options;
   const safePV0 = typeof currentValue === 'number' && !isNaN(currentValue) ? currentValue : 0;
+
+  const schedule = (Array.isArray(pacSchedule) && pacSchedule.length > 0)
+    ? pacSchedule.filter(s => s.amount > 0).sort((a, b) => a.startMonth - b.startMonth)
+    : [{ startMonth: 0, amount: monthlyPAC }];
+
+  const pacAt = (m) => {
+    let amount = schedule[0].amount;
+    for (const seg of schedule) {
+      if (m >= seg.startMonth) amount = seg.amount;
+      else break;
+    }
+    return amount;
+  };
 
   const muBlended = config.allocation.reduce((s, a) => s + a.weight * a.assumedReturnAnnual, 0);
   const sigmas = config.allocation.map(a => a.assumedVolAnnual);
@@ -158,16 +192,17 @@ export function generateTrendPaths(options = {}) {
       while (u === 0) u = Math.random();
       const z = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * w);
       const r = Math.exp(muLog + sigmaM * z) - 1;
-      v = (v + monthlyPAC) * (1 + r);
+      v = (v + pacAt(m - 1)) * (1 + r);
       path.push(v);
     }
     paths.push(path);
   }
 
   const result = [];
+  let cumContrib = safePV0;
   for (let m = 0; m <= horizonMonths; m++) {
     const valuesAtM = paths.map(p => p[m]).sort((a, b) => a - b);
-    const contributed = safePV0 + monthlyPAC * m;
+    if (m > 0) cumContrib += pacAt(m - 1);
     result.push({
       month: m,
       p5: valuesAtM[Math.floor(0.05 * N)],
@@ -175,10 +210,30 @@ export function generateTrendPaths(options = {}) {
       p50: valuesAtM[Math.floor(0.50 * N)],
       p75: valuesAtM[Math.floor(0.75 * N)],
       p95: valuesAtM[Math.floor(0.95 * N)],
-      contributed,
+      contributed: cumContrib,
     });
   }
   return result;
+}
+
+/**
+ * Applica deflazione (inflation) a un dataset trend.
+ * Restituisce nuovo array con valori in potere d'acquisto reale.
+ */
+export function deflateTrend(trendData, inflationAnnual = 0.02) {
+  const monthlyDefl = Math.pow(1 + inflationAnnual, 1 / 12);
+  return trendData.map(d => {
+    const factor = Math.pow(monthlyDefl, d.month);
+    return {
+      month: d.month,
+      p5: d.p5 / factor,
+      p25: d.p25 / factor,
+      p50: d.p50 / factor,
+      p75: d.p75 / factor,
+      p95: d.p95 / factor,
+      contributed: d.contributed / factor,
+    };
+  });
 }
 
 export function clearMCCache() {
