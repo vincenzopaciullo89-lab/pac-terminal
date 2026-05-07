@@ -330,9 +330,16 @@
       </div>
 
       <div class="field">
-        <label for="tax-amount">Importo da vendere (€)</label>
-        <input type="number" id="tax-amount" step="100" placeholder="es. 25000">
-      </div>
+     <label for="tax-etf-select">ETF da vendere</label>
+     <select id="tax-etf-select" aria-label="Seleziona ETF">
+       <option value="">— Seleziona ETF (auto-fill PMC e prezzo) —</option>
+     </select>
+     <div class="field-help">Selezionare un ETF precompila PMC e prezzo correnti dal portafoglio</div>
+   </div>
+   <div class="field">
+     <label for="tax-amount">Importo da vendere (€)</label>
+     <input type="number" id="tax-amount" step="100" placeholder="es. 25000">
+   </div>
       <div class="field-row">
         <div class="field">
           <label for="tax-cost">PMC (€/quota)</label>
