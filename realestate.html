@@ -132,12 +132,12 @@ const calc = () => {
   const inputs = {
     purchasePrice: parseFloat($('#re-purchase').value) || 0,
     salePrice: parseFloat($('#re-sale').value) || 0,
-    holdingMonths: parseInt($('#re-duration').value) || 1,
-    renovationCost: parseFloat($('#re-renovation').value) || 0,
-    monthlyHolding: parseFloat($('#re-holding').value) || 0,
+    durationMonths: parseInt($('#re-duration').value) || 1,
+    renovation: parseFloat($('#re-renovation').value) || 0,
+    holdingCostsMonthly: parseFloat($('#re-holding').value) || 0,
     cadastralValue: parseFloat($('#re-cadastral').value) || null,
-    firstHome: $('#re-firsthome').checked,
-    newBuilding: $('#re-newbuilding').checked,
+    isFirstHome: $('#re-firsthome').checked,
+    isNewBuilding: $('#re-newbuilding').checked,
   };
 
   if (inputs.purchasePrice <= 0 || inputs.salePrice <= 0) {
@@ -161,8 +161,8 @@ const calc = () => {
   out.innerHTML = `
     <div class="result-verdict">${verdict} — verifica realismo del prezzo di vendita</div>
     <div style="display:grid;grid-template-columns:1fr auto;gap:8px 16px;">
-      <span class="muted">Valore catastale</span><span class="text-right">${fmt.eur(r.cadastralUsed)} ${r.cadastralEstimated ? '<span class=\"muted\">(stimato 60% prezzo)</span>' : ''}</span>
-      <span class="muted">Capitale impiegato</span><span class="text-right">${fmt.eur(r.capitalDeployed)}</span>
+      <span class="muted">Valore catastale</span><span class="text-right">${fmt.eur(r.cadastralValue)} ${r.cadastralValueEstimated ? '<span class=\"muted\">(stimato 60% prezzo)</span>' : ''}</span>
+      <span class="muted">Capitale impiegato</span><span class="text-right">${fmt.eur(r.capitalEmployed)}</span>
       <span class="muted">Profitto netto</span>
       <span class="text-right ${r.netProfit >= 0 ? 'positive' : 'negative'}">${fmt.eur(r.netProfit)}</span>
       <span class="muted">RoC</span><span class="text-right ${r.roc >= 0 ? 'positive' : 'negative'}">${fmt.pct(r.roc)}</span>
@@ -173,7 +173,7 @@ const calc = () => {
       <span class="muted">Vantaggio vs VWCE</span>
       <span class="text-right ${r.advantageVsVWCE >= 0 ? 'positive' : 'negative'}">${fmt.eur(r.advantageVsVWCE)}</span>
       <span class="muted">Break-even prezzo vendita</span>
-      <span class="text-right">${fmt.eur(r.breakEvenSalePrice)}</span>
+      <span class="text-right">${fmt.eur(r.breakEven)}</span>
     </div>
   `;
 
@@ -187,7 +187,7 @@ const calc = () => {
     html += '<span class="muted">Scenario</span><span class="muted text-right">IRR annuo</span><span class="muted text-right">Profitto netto</span>';
     stress.forEach(s => {
       const irrCls = s.irrAnnualized > 0.12 ? 'positive' : s.irrAnnualized > 0.06 ? '' : 'negative';
-      html += `<span>${s.label}</span><span class="text-right ${irrCls}">${fmt.pct(s.irrAnnualized)}</span><span class="text-right">${fmt.eur(s.netProfit)}</span>`;
+      html += `<span>${s.name}</span><span class="text-right ${irrCls}">${fmt.pct(s.irrAnnualized)}</span><span class="text-right">${fmt.eur(s.netProfit)}</span>`;
     });
     html += '</div></div>';
     stressBox.innerHTML = html;
