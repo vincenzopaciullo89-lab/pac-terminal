@@ -304,6 +304,50 @@ function renderMCResults(results) {
 // TAX SIMULATOR
 // -------------------------------------------------------------------------
 function setupTaxSim() {
+  // Popola dropdown con ETF dal portafoglio
+  function populateETFSelect() {
+    const select = $('#tax-etf-select');
+    if (!select || !state.portfolio?.holdings) return;
+
+    // Mantieni la prima opzione (placeholder)
+    const placeholder = select.querySelector('option[value=""]');
+    select.innerHTML = '';
+    if (placeholder) select.appendChild(placeholder);
+
+    // Aggiungi un'opzione per ogni ETF con quote > 0
+    state.portfolio.holdings.forEach(h => {
+      if (h.units <= 0) return;  // skip ETF a 0 quote (es. VWCE prima del primo PAC)
+      const opt = document.createElement('option');
+      opt.value = h.isin;
+      const shortName = h.name.split(' ').slice(0, 4).join(' ');
+      const legacyTag = h.isLegacy ? ' [legacy]' : '';
+      opt.textContent = `${shortName}${legacyTag} — PMC €${h.avgCost.toFixed(2)} · Prezzo €${h.currentPrice.toFixed(2)}`;
+      opt.dataset.pmc = h.avgCost;
+      opt.dataset.price = h.currentPrice;
+      opt.dataset.units = h.units;
+      opt.dataset.value = h.currentValue;
+      opt.dataset.pnl = h.pnlAbs;
+      select.appendChild(opt);
+    });
+  }
+
+  // Handler quando l'utente seleziona un ETF
+  function onETFSelect() {
+    const select = $('#tax-etf-select');
+    const opt = select?.selectedOptions?.[0];
+    if (!opt || !opt.value) return;
+
+    const pmc = parseFloat(opt.dataset.pmc);
+    const price = parseFloat(opt.dataset.price);
+
+    // Precompila PMC e prezzo
+    if (!isNaN(pmc)) $('#tax-cost').value = pmc.toFixed(2);
+    if (!isNaN(price)) $('#tax-price').value = price.toFixed(2);
+
+    // Trigger ricalcolo
+    calc();
+  }
+
   const calc = () => {
     const amt = parseFloat($('#tax-amount').value);
     const cost = parseFloat($('#tax-cost').value);
@@ -313,7 +357,26 @@ function setupTaxSim() {
 
     if (!amt || amt <= 0) {
       out.className = 'result-box';
-      out.innerHTML = '<div class="muted">Inserisci un importo per simulare la vendita.</div>';
+      // Se ho un ETF selezionato, mostra info utili anche senza importo
+      const select = $('#tax-etf-select');
+      const opt = select?.selectedOptions?.[0];
+      if (opt && opt.value) {
+        const value = parseFloat(opt.dataset.value);
+        const pnl = parseFloat(opt.dataset.pnl);
+        const taxIfFull = pnl > 0 ? pnl * 0.26 : 0;
+        out.innerHTML = `
+          <div class="muted" style="margin-bottom:12px;">Inserisci un importo per simulare la vendita parziale.</div>
+          <div style="display:grid;grid-template-columns:1fr auto;gap:6px 16px;font-size:12px;">
+            <span class="muted">Posizione attuale</span><span class="text-right">${fmt.eur(value)}</span>
+            <span class="muted">Plus/minus latente</span>
+            <span class="text-right ${pnl >= 0 ? 'positive' : 'negative'}">${fmt.eur(pnl)}</span>
+            <span class="muted">Se vendessi TUTTO oggi, tassa</span>
+            <span class="text-right negative">${fmt.eur(taxIfFull)}</span>
+          </div>
+        `;
+      } else {
+        out.innerHTML = '<div class="muted">Seleziona un ETF dal menu e inserisci un importo per simulare la vendita.</div>';
+      }
       return;
     }
 
@@ -353,11 +416,21 @@ function setupTaxSim() {
     `;
   };
 
+  // Bind input listeners
   ['#tax-amount', '#tax-cost', '#tax-price'].forEach(id => {
     $(id)?.addEventListener('input', calc);
   });
+  $('#tax-etf-select')?.addEventListener('change', onETFSelect);
+
+  // Popola il select al primo render
+  populateETFSelect();
+
+  // Esponi funzione di refresh per chiamarla quando cambiano i prezzi
+  window._taxSimRefresh = populateETFSelect;
+
   calc();
 }
+
 
 // -------------------------------------------------------------------------
 // REAL ESTATE
@@ -585,6 +658,9 @@ async function refresh(forceReload = false) {
   // 5. Render
   renderHero(state.strategy);
   renderTracker(state.portfolio);
+
+  // Aggiorna dropdown tax simulator quando cambiano i prezzi
+  if (window._taxSimRefresh) window._taxSimRefresh();
 
   // Aggiorna header status di nuovo (potrebbe essere cambiato dopo i fetch)
   renderHeaderStatus();
