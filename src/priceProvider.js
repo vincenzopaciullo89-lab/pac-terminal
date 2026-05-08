@@ -45,7 +45,7 @@ const HISTORY_CACHE_KEY = 'pd_history_v31';
 const HISTORY_CACHE_TS_KEY = 'pd_history_ts_v31';
 const MANUAL_OVERRIDE_KEY = 'pd_manual_prices_v2';
 
-const CACHE_HOURS = 6;
+const CACHE_HOURS = 1;
 const FETCH_TIMEOUT_MS = 10000;
 
 // -------------------------------------------------------------------------
