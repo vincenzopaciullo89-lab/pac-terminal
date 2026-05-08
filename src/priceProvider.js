@@ -103,11 +103,16 @@ function parseItalianDate(s) {
 // -------------------------------------------------------------------------
 // FETCH CSV
 // -------------------------------------------------------------------------
-async function fetchCSV(url) {
+async function fetchCSV(url, { bust = false } = {}) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  // Cache-buster solo su force-refresh: rende la URL unica per superare
+  // eventuali cache CDN o proxy che onorano la URL come chiave.
+  const finalUrl = bust ? `${url}${url.includes('?') ? '&' : '?'}_=${Date.now()}` : url;
   try {
-    const res = await fetch(url, { signal: controller.signal });
+    // cache: 'no-store' disabilita la HTTP cache del browser (altrimenti il
+    // browser può servire una risposta cached anche se forceRefresh è true).
+    const res = await fetch(finalUrl, { signal: controller.signal, cache: 'no-store' });
     clearTimeout(timeoutId);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.text();
@@ -226,8 +231,8 @@ async function fetchAllSheets(forceRefresh = false) {
     let result = { current: {}, history: { 'VWCE.MI': [], 'CSNDX.MI': [] } };
     try {
       const [currentText, historyText] = await Promise.all([
-        fetchCSV(SHEETS_URLS.current),
-        fetchCSV(SHEETS_URLS.history),
+        fetchCSV(SHEETS_URLS.current, { bust: forceRefresh }),
+        fetchCSV(SHEETS_URLS.history, { bust: forceRefresh }),
       ]);
       result.current = parseCurrentSheet(currentText);
       result.history = parseHistorySheet(historyText);
