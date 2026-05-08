@@ -230,9 +230,12 @@ async function fetchAllSheets(forceRefresh = false) {
   _fetchPromise = (async () => {
     let result = { current: {}, history: { 'VWCE.MI': [], 'CSNDX.MI': [] } };
     try {
+      // Cache-buster sempre attivo: anche su fetch automatico (non solo REFRESH).
+      // Necessario per superare cache CDN/proxy che ignorano Cache-Control e
+      // per evitare che il primo load post-deploy serva un CSV vecchio.
       const [currentText, historyText] = await Promise.all([
-        fetchCSV(SHEETS_URLS.current, { bust: forceRefresh }),
-        fetchCSV(SHEETS_URLS.history, { bust: forceRefresh }),
+        fetchCSV(SHEETS_URLS.current, { bust: true }),
+        fetchCSV(SHEETS_URLS.history, { bust: true }),
       ]);
       result.current = parseCurrentSheet(currentText);
       result.history = parseHistorySheet(historyText);
