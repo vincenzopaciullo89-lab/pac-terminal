@@ -17,11 +17,19 @@
 import { config } from './config.js';
 
 // -------------------------------------------------------------------------
-// CONFIGURAZIONE FONTI — URL VERIFICATI 7 MAG 2026
+// CONFIGURAZIONE FONTI
 // -------------------------------------------------------------------------
+// Endpoint primary: gviz/tq (real-time, no publish-cache lag).
+//   Richiede: spreadsheet condiviso "Anyone with link · Viewer".
+// Fallback: /pub?...&output=csv (publish-to-web, cache server-side ~5-15min).
+//   Sempre disponibile finché lo Sheet è "Pubblicato sul web".
+const SHEET_ID = '1ohNhmE4UUXVmVycuFn2sMcAvpk0ZkwfleHP8fgaxemY';
+const PUBLISH_ID = '2PACX-1vSA078B6Q5XKyReR0tAjNT5hDEuE4RQSoAdEsa3t9KWSzjfYE2S4OtJ3wazmvU7gMnYveo2OIB0wAFs';
 const SHEETS_URLS = {
-  current: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSA078B6Q5XKyReR0tAjNT5hDEuE4RQSoAdEsa3t9KWSzjfYE2S4OtJ3wazmvU7gMnYveo2OIB0wAFs/pub?gid=0&single=true&output=csv',
-  history: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSA078B6Q5XKyReR0tAjNT5hDEuE4RQSoAdEsa3t9KWSzjfYE2S4OtJ3wazmvU7gMnYveo2OIB0wAFs/pub?gid=1714634805&single=true&output=csv',
+  current: `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&gid=0`,
+  history: `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&gid=1714634805`,
+  currentFallback: `https://docs.google.com/spreadsheets/d/e/${PUBLISH_ID}/pub?gid=0&single=true&output=csv`,
+  historyFallback: `https://docs.google.com/spreadsheets/d/e/${PUBLISH_ID}/pub?gid=1714634805&single=true&output=csv`,
 };
 
 // Mappa ISIN → ticker (formato Sheet: XXXX.MI)
@@ -39,10 +47,12 @@ const TICKER_TO_ISIN = Object.fromEntries(
   Object.entries(ISIN_TO_TICKER).map(([isin, ticker]) => [ticker, isin])
 );
 
-const CACHE_KEY = 'pd_prices_v31';
-const CACHE_TIMESTAMP_KEY = 'pd_prices_ts_v31';
-const HISTORY_CACHE_KEY = 'pd_history_v31';
-const HISTORY_CACHE_TS_KEY = 'pd_history_ts_v31';
+// Chiavi cache bumpate v31 → v32 con switch a gviz endpoint:
+// invalida tutte le cache locali stantie senza richiedere clear browser.
+const CACHE_KEY = 'pd_prices_v32';
+const CACHE_TIMESTAMP_KEY = 'pd_prices_ts_v32';
+const HISTORY_CACHE_KEY = 'pd_history_v32';
+const HISTORY_CACHE_TS_KEY = 'pd_history_ts_v32';
 const MANUAL_OVERRIDE_KEY = 'pd_manual_prices_v2';
 
 const CACHE_HOURS = 1;
@@ -229,16 +239,33 @@ async function fetchAllSheets(forceRefresh = false) {
 
   _fetchPromise = (async () => {
     let result = { current: {}, history: { 'VWCE.MI': [], 'CSNDX.MI': [] } };
-    try {
-      // Cache-buster sempre attivo: anche su fetch automatico (non solo REFRESH).
-      // Necessario per superare cache CDN/proxy che ignorano Cache-Control e
-      // per evitare che il primo load post-deploy serva un CSV vecchio.
+
+    // Tenta gviz (real-time). Se fallisce o ritorna zero ticker, fallback al /pub.
+    async function tryEndpoint(currentUrl, historyUrl) {
       const [currentText, historyText] = await Promise.all([
-        fetchCSV(SHEETS_URLS.current, { bust: true }),
-        fetchCSV(SHEETS_URLS.history, { bust: true }),
+        fetchCSV(currentUrl, { bust: true }),
+        fetchCSV(historyUrl, { bust: true }),
       ]);
-      result.current = parseCurrentSheet(currentText);
-      result.history = parseHistorySheet(historyText);
+      return {
+        current: parseCurrentSheet(currentText),
+        history: parseHistorySheet(historyText),
+      };
+    }
+
+    try {
+      let parsed;
+      try {
+        parsed = await tryEndpoint(SHEETS_URLS.current, SHEETS_URLS.history);
+        if (Object.keys(parsed.current).length === 0) {
+          throw new Error('gviz returned 0 tickers');
+        }
+      } catch (gvizErr) {
+        console.warn('[priceProvider] gviz failed, fallback to /pub:', gvizErr.message);
+        parsed = await tryEndpoint(SHEETS_URLS.currentFallback, SHEETS_URLS.historyFallback);
+      }
+
+      result.current = parsed.current;
+      result.history = parsed.history;
 
       if (Object.keys(result.current).length > 0) {
         safeStorage.set(CACHE_KEY, JSON.stringify(result.current));
@@ -249,7 +276,7 @@ async function fetchAllSheets(forceRefresh = false) {
         safeStorage.set(HISTORY_CACHE_TS_KEY, String(Date.now()));
       }
     } catch (err) {
-      console.warn('[priceProvider v3.1] Sheets fetch failed:', err.message);
+      console.warn('[priceProvider] all endpoints failed:', err.message);
       // Fallback su cache anche scaduta
       try {
         const oldCached = JSON.parse(safeStorage.get(CACHE_KEY) || '{}');
