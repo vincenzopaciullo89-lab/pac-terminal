@@ -134,12 +134,18 @@ export function computePriceMetrics(historicalPrices, currentPrice) {
   if (!Array.isArray(historicalPrices) || historicalPrices.length < 2) return null;
   const closes = historicalPrices.map(d => d.close);
 
-  const ath = Math.max(...closes, currentPrice);
-  const ddATH = ath > 0 ? (currentPrice / ath) - 1 : 0;
-
+  // Drawdown da massimo rolling 252 giorni. Esposto come `dd252D`
+  // (non `ddATH`): la finestra di history disponibile dal provider corrente
+  // è ~1 anno, quindi un vero ATH non è calcolabile. Quando il Task Group B
+  // introdurrà storico esteso, si potrà reintrodurre un `ddATH` autentico
+  // sulla serie completa.
   const last252 = closes.slice(-252);
-  const high12M = Math.max(...last252, currentPrice);
-  const dd12M = high12M > 0 ? (currentPrice / high12M) - 1 : 0;
+  const high252D = Math.max(...last252, currentPrice);
+  const dd252D = high252D > 0 ? (currentPrice / high252D) - 1 : 0;
+
+  // Alias: in questa fase `dd12M` coincide con `dd252D` (stessa finestra).
+  const high12M = high252D;
+  const dd12M = dd252D;
 
   const last200 = closes.slice(-200);
   const ma200 = last200.length >= 50
@@ -175,7 +181,7 @@ export function computePriceMetrics(historicalPrices, currentPrice) {
   if (volRolling && volRolling > 0.25) regime = 'stressed';
   else if (volRolling && volRolling > 0.18) regime = 'elevated';
 
-  return { ath, high12M, ddATH, dd12M, ma200, ma10m: ma200, madMA200, volRolling, zScore, regime };
+  return { high252D, high12M, dd252D, dd12M, ma200, ma10m: ma200, madMA200, volRolling, zScore, regime };
 }
 
 /**

@@ -137,7 +137,7 @@ function renderTerminalBar() {
   setBar('#tb-vwce', vwcePrice ? fmt.eur(vwcePrice, 2) : '—');
 
   setBarPct('#tb-dd12m', m?.dd12M, true);
-  setBarPct('#tb-ddath', m?.ddATH, true);
+  setBarPct('#tb-dd252d', m?.dd252D, true);
   setBarPct('#tb-ma200', m?.madMA200, false);
   setBarPct('#tb-vol', m?.volRolling, false, false, 1);
 
@@ -839,7 +839,7 @@ function setupTooltips() {
     '[data-metric="ma200dev"]': 'Deviazione dalla media mobile 200 giorni. >+10% trend rialzista esteso, <-5% inizio drawdown significativo.',
     '[data-metric="vol60d"]': 'Volatilit\u00e0 annualizzata sugli ultimi 60 giorni. <15% calmo, 15-20% normale, >25% stress.',
     '[data-metric="dd12m"]': 'Drawdown 12 mesi: scostamento percentuale dal massimo recente. \u00c8 il trigger primario per attivare il boost del PAC.',
-    '[data-metric="ddath"]': 'Drawdown dal massimo storico (all-time-high) del periodo disponibile.',
+    '[data-metric="dd252d"]': 'Drawdown dal massimo dei 252 giorni di Borsa più recenti (~12 mesi). Con la storia attualmente disponibile coincide col DD12M; quando l\'archivio prezzi sarà esteso, esprimerà un drawdown ATH autentico.',
     '[data-metric="boostytd"]': 'Numero di mesi in cui hai gi\u00e0 fatto un boost quest\'anno. Cap massimo: 6/anno per evitare over-trading.',
     // Bottone boost
     '#btn-record-boost': 'Click solo quando hai effettivamente fatto un bonifico extra rispetto al PAC base. Aggiorna il contatore BOOST YTD.',
