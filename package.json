@@ -1,0 +1,10 @@
+{
+  "name": "pac-terminal",
+  "version": "0.1.0",
+  "description": "PAC Terminal — monitoraggio Piano di Accumulo Capitale ETF (Trade Republic)",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  }
+}

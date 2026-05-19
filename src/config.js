@@ -53,7 +53,7 @@ export const config = {
       isin: 'IE00B53SZB19',
       weight: 0.10,
       role: 'satellite-tech',
-      ter: 0.0033,
+      ter: 0.0030,
       replication: 'physical',
       distribution: 'accumulating',
       domicile: 'IE',
@@ -116,12 +116,15 @@ export const config = {
   // -------------------------------------------------------------------------
   // STRATEGY ENGINE — Drawdown-Responsive Contribution
   // -------------------------------------------------------------------------
+  // Ridistribuzione tier per rispettare cap stretto €1.000/mese (PAC base €500).
+  // Tier 4 era 2.5x = €1.250, violava il vincolo operativo.
+  // Numeri di lavoro: la calibrazione finale uscirà dal backtest (Task Group D).
   strategyTiers: [
-    { tier: 0, ddMin: -0.05, ddMax:  0.99, multiplier: 1.00, label: 'Normal',          description: 'Mercato vicino al trend' },
-    { tier: 1, ddMin: -0.10, ddMax: -0.05, multiplier: 1.20, label: 'Tier 1 Mild',     description: 'Drawdown lieve' },
-    { tier: 2, ddMin: -0.15, ddMax: -0.10, multiplier: 1.50, label: 'Tier 2 Moderate', description: 'Drawdown moderato' },
-    { tier: 3, ddMin: -0.25, ddMax: -0.15, multiplier: 2.00, label: 'Tier 3 Severe',   description: 'Drawdown severo' },
-    { tier: 4, ddMin: -1.00, ddMax: -0.25, multiplier: 2.50, label: 'Tier 4 Extreme',  description: 'Drawdown estremo' },
+    { tier: 0, ddMin: -0.05, ddMax:  0.99, multiplier: 1.00, label: 'Normal',           description: 'Mercato vicino al trend' },
+    { tier: 1, ddMin: -0.10, ddMax: -0.05, multiplier: 1.10, label: 'Tier 1 Elevated',  description: 'Drawdown lieve' },
+    { tier: 2, ddMin: -0.15, ddMax: -0.10, multiplier: 1.30, label: 'Tier 2 Stressed',  description: 'Drawdown moderato' },
+    { tier: 3, ddMin: -0.25, ddMax: -0.15, multiplier: 1.60, label: 'Tier 3 Severe',    description: 'Drawdown severo' },
+    { tier: 4, ddMin: -1.00, ddMax: -0.25, multiplier: 2.00, label: 'Tier 4 Extreme',   description: 'Drawdown estremo' },
   ],
 
   triggerComposite: {

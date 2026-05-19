@@ -10,7 +10,7 @@
 
 import { config } from './config.js';
 
-function determineTier(drawdown) {
+export function determineTier(drawdown) {
   for (const tier of config.strategyTiers) {
     if (drawdown <= tier.ddMax && drawdown > tier.ddMin) return tier;
   }
@@ -119,7 +119,7 @@ export function getStrategyOfTheMonth(metrics, portfolio) {
       extraAmount: 0,
       totalAmount: baseAmount,
       drawdown: null,
-      drawdownATH: null,
+      drawdown252D: null,
       composite: null,
       madMA200: null,
       zScore: null,
@@ -177,7 +177,7 @@ export function getStrategyOfTheMonth(metrics, portfolio) {
     extraAmount,
     totalAmount,
     drawdown: metrics.dd12M,
-    drawdownATH: metrics.ddATH,
+    drawdown252D: metrics.dd252D,
     composite,
     madMA200: metrics.madMA200,
     zScore: metrics.zScore,
