@@ -53,7 +53,7 @@ export const config = {
       isin: 'IE00B53SZB19',
       weight: 0.10,
       role: 'satellite-tech',
-      ter: 0.0033,
+      ter: 0.0030,
       replication: 'physical',
       distribution: 'accumulating',
       domicile: 'IE',
