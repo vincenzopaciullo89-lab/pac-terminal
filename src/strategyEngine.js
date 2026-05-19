@@ -10,7 +10,7 @@
 
 import { config } from './config.js';
 
-function determineTier(drawdown) {
+export function determineTier(drawdown) {
   for (const tier of config.strategyTiers) {
     if (drawdown <= tier.ddMax && drawdown > tier.ddMin) return tier;
   }
