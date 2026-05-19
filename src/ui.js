@@ -17,6 +17,7 @@ import {
   getHistoricalPrices,
   setManualPrice,
   getCacheAgeHours,
+  isDataStale,
   clearAllCache,
   hasFreshManualPrices,
   getManualPrices,
@@ -216,14 +217,18 @@ function renderHeaderStatus() {
 
   const hasManual = hasFreshManualPrices();
   const cacheAge = getCacheAgeHours();
-  const hasCache = cacheAge !== null && parseFloat(cacheAge) < 24;
+  const stale = isDataStale();
 
   if (hasManual) {
     dot.className = 'status-dot';
     text.textContent = 'Prezzi manuali · attivi';
-  } else if (hasCache) {
+  } else if (cacheAge !== null && !stale) {
     dot.className = 'status-dot';
     text.textContent = `Aggiornato ${cacheAge}h fa`;
+  } else if (cacheAge !== null && stale) {
+    // Dati esistono ma sono >24h vecchi: avviso discreto, niente allarme.
+    dot.className = 'status-dot warning';
+    text.textContent = `Dati obsoleti · ${cacheAge}h fa`;
   } else {
     dot.className = 'status-dot warning';
     text.textContent = 'Prezzi fallback (statici)';
