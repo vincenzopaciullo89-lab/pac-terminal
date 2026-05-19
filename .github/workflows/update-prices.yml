@@ -1,0 +1,63 @@
+# =============================================================================
+# update-prices.yml — daily price fetcher per PAC Terminal
+# =============================================================================
+# Schedula due esecuzioni giornaliere:
+#   - 07:30 UTC: prima del giorno di esecuzione PAC (giorno 2 del mese)
+#   - 18:30 UTC: dopo chiusura Borsa europea, dati più freschi
+# Permette anche trigger manuale via workflow_dispatch.
+# Commit automatico di /data/{prices,history,health}.json sul branch corrente
+# se ci sono cambiamenti rispetto al commit precedente.
+# =============================================================================
+name: update-prices
+
+on:
+  schedule:
+    - cron: '30 7 * * *'
+    - cron: '30 18 * * *'
+  workflow_dispatch:
+
+# FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 fa girare le JavaScript actions
+# (actions/checkout, actions/setup-python) sul runtime Node 24 invece
+# del Node 20 deprecato. Soluzione preferita al bump versione-per-versione
+# di ciascuna action: agisce uniformemente, niente regressioni da pinning.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: .github/scripts/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r .github/scripts/requirements.txt
+
+      - name: Run price fetcher
+        run: python3 .github/scripts/fetch_prices.py
+
+      - name: Commit & push if data changed
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/prices.json data/history.json data/health.json
+          if git diff --cached --quiet; then
+            echo "No data changes; nothing to commit."
+          else
+            # [skip ci] previene loop di workflow ricorsivi.
+            git commit -m "data: update prices @ $(date -u +%Y-%m-%dT%H:%M:%SZ) [skip ci]"
+            git push
+          fi
