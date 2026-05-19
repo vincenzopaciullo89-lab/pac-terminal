@@ -128,64 +128,12 @@ export function computeDrawdown(historicalValues, currentValue) {
 }
 
 /**
- * Metriche di prezzo: drawdown, MA, volatilità, z-score.
+ * Re-export di `computePriceMetrics` da `metricsEngine.js` per
+ * preservare il vecchio import path. La funzione vive in un modulo
+ * self-contained (nessuna dipendenza browser-only) così è importabile
+ * anche da Node.js (Task Group F).
  */
-export function computePriceMetrics(historicalPrices, currentPrice) {
-  if (!Array.isArray(historicalPrices) || historicalPrices.length < 2) return null;
-  const closes = historicalPrices.map(d => d.close);
-
-  // Drawdown da massimo rolling 252 giorni. Esposto come `dd252D`
-  // (non `ddATH`): la finestra di history disponibile dal provider corrente
-  // è ~1 anno, quindi un vero ATH non è calcolabile. Quando il Task Group B
-  // introdurrà storico esteso, si potrà reintrodurre un `ddATH` autentico
-  // sulla serie completa.
-  const last252 = closes.slice(-252);
-  const high252D = Math.max(...last252, currentPrice);
-  const dd252D = high252D > 0 ? (currentPrice / high252D) - 1 : 0;
-
-  // Alias: in questa fase `dd12M` coincide con `dd252D` (stessa finestra).
-  const high12M = high252D;
-  const dd12M = dd252D;
-
-  // MA200 calcolata solo con la finestra completa: una "MA200" su 50-100
-  // osservazioni è rumorosa e fuorviante. Se la storia non basta, restituiamo
-  // null e la UI mostra "—" (onestà > pseudo-precisione).
-  const last200 = closes.slice(-200);
-  const ma200 = last200.length >= 200
-    ? last200.reduce((a, b) => a + b, 0) / last200.length
-    : null;
-  const madMA200 = ma200 ? (currentPrice / ma200) - 1 : null;
-
-  const last60 = closes.slice(-60);
-  let volRolling = null;
-  if (last60.length >= 30) {
-    const returns = [];
-    for (let i = 1; i < last60.length; i++) {
-      returns.push(Math.log(last60[i] / last60[i-1]));
-    }
-    const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
-    const variance = returns.reduce((a, r) => a + (r - mean) ** 2, 0) / returns.length;
-    volRolling = Math.sqrt(variance) * Math.sqrt(252);
-  }
-
-  let zScore = null;
-  if (closes.length >= 80) {
-    const last21Return = (currentPrice / closes[closes.length - 22]) - 1;
-    const rollingReturns = [];
-    for (let i = 21; i < closes.length; i++) {
-      rollingReturns.push((closes[i] / closes[i - 21]) - 1);
-    }
-    const m = rollingReturns.reduce((a, b) => a + b, 0) / rollingReturns.length;
-    const s = Math.sqrt(rollingReturns.reduce((a, r) => a + (r - m) ** 2, 0) / rollingReturns.length);
-    zScore = s > 0 ? (last21Return - m) / s : null;
-  }
-
-  let regime = 'normal';
-  if (volRolling && volRolling > 0.25) regime = 'stressed';
-  else if (volRolling && volRolling > 0.18) regime = 'elevated';
-
-  return { high252D, high12M, dd252D, dd12M, ma200, ma10m: ma200, madMA200, volRolling, zScore, regime };
-}
+export { computePriceMetrics } from './metricsEngine.js';
 
 /**
  * Prossimi eventi automatici (bonifico + acquisto)
