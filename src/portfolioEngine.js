@@ -147,8 +147,11 @@ export function computePriceMetrics(historicalPrices, currentPrice) {
   const high12M = high252D;
   const dd12M = dd252D;
 
+  // MA200 calcolata solo con la finestra completa: una "MA200" su 50-100
+  // osservazioni è rumorosa e fuorviante. Se la storia non basta, restituiamo
+  // null e la UI mostra "—" (onestà > pseudo-precisione).
   const last200 = closes.slice(-200);
-  const ma200 = last200.length >= 50
+  const ma200 = last200.length >= 200
     ? last200.reduce((a, b) => a + b, 0) / last200.length
     : null;
   const madMA200 = ma200 ? (currentPrice / ma200) - 1 : null;
