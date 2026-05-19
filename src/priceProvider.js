@@ -1,17 +1,20 @@
 // =============================================================================
-// PRICE PROVIDER v3.1 — Google Sheets CSV (FINAL)
+// PRICE PROVIDER v4 — JSON statici da GitHub Actions (Task B.4)
 // =============================================================================
-// Strategia 4-livelli (in ordine di priorità):
-//   1. Manual override (l'utente ha l'ultima parola)
-//   2. Google Sheets CSV pubblicato (fonte automatica primaria)
-//   3. Cache localStorage (offline fallback, valida 6h)
-//   4. Fallback statico (currentPriceFallback in config.js)
+// La pipeline GitHub Actions (cron 07:30 + 18:30 UTC) committa /data/prices.json
+// e /data/history.json nel repo. Il sito legge questi due file da same-origin
+// senza CORS né dipendenze da provider esterni a runtime.
 //
-// FIX vs v3:
-//   - URL corretti (SA0/OIB invece di SAO/OlB)
-//   - getAllPrices include TUTTI gli ETF (anche legacy via ISIN→ticker map)
-//   - getHistoricalPrices legge dal Sheet (no più Stooq bloccato)
-//   - Supporto storico per CSNDX in aggiunta a VWCE
+// Strategia di priorità (in ordine):
+//   1. Manual override (l'utente forza prezzi specifici dalla dashboard)
+//   2. Cache localStorage (TTL 1h, evita fetch ripetuti)
+//   3. Fetch /data/prices.json + /data/history.json (same-origin)
+//   4. Fallback statico (currentPriceFallback dal config) — solo se tutto il
+//      resto è inaccessibile (es. sviluppo offline)
+//
+// VINCOLO POST-PR#18: nessun fallback live a Google Sheets nel browser.
+// Se il JSON è mancante o obsoleto, l'UI mostra avviso ma NON ritenta fonti
+// esterne — la responsabilità è del cron lato server-side.
 // =============================================================================
 
 import { config } from './config.js';
@@ -19,21 +22,13 @@ import { config } from './config.js';
 // -------------------------------------------------------------------------
 // CONFIGURAZIONE FONTI
 // -------------------------------------------------------------------------
-// Endpoint primary: gviz/tq (real-time, no publish-cache lag).
-//   Richiede: spreadsheet condiviso "Anyone with link · Viewer".
-// Fallback: /pub?...&output=csv (publish-to-web, cache server-side ~5-15min).
-//   Sempre disponibile finché lo Sheet è "Pubblicato sul web".
-const SHEET_ID = '1ohNhmE4UUXVmVycuFn2sMcAvpk0ZkwfleHP8fgaxemY';
-const PUBLISH_ID = '2PACX-1vSA078B6Q5XKyReR0tAjNT5hDEuE4RQSoAdEsa3t9KWSzjfYE2S4OtJ3wazmvU7gMnYveo2OIB0wAFs';
-const SHEETS_URLS = {
-  current: `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&gid=0`,
-  history: `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&gid=1714634805`,
-  currentFallback: `https://docs.google.com/spreadsheets/d/e/${PUBLISH_ID}/pub?gid=0&single=true&output=csv`,
-  historyFallback: `https://docs.google.com/spreadsheets/d/e/${PUBLISH_ID}/pub?gid=1714634805&single=true&output=csv`,
+const DATA_URLS = {
+  prices: 'data/prices.json',
+  history: 'data/history.json',
 };
 
-// Mappa ISIN → ticker (formato Sheet: XXXX.MI)
-// Necessaria perché initialHoldings ha solo ISIN, ma il Sheet usa ticker .MI
+// Mappa ISIN → ticker .MI (formato canonico interno usato in tutto il codice).
+// Necessaria perché initialHoldings ha solo ISIN.
 const ISIN_TO_TICKER = {
   'IE00BK5BQT80': 'VWCE.MI',
   'IE00B53SZB19': 'CSNDX.MI',
@@ -41,22 +36,32 @@ const ISIN_TO_TICKER = {
   'IE00B4L5Y983': 'SWDA.MI',
   'IE00BH04GL39': 'VETA.MI',
 };
-
-// Mappa ticker → ISIN (inversa, per reverse lookup)
 const TICKER_TO_ISIN = Object.fromEntries(
-  Object.entries(ISIN_TO_TICKER).map(([isin, ticker]) => [ticker, isin])
+  Object.entries(ISIN_TO_TICKER).map(([isin, t]) => [t, isin]),
 );
 
-// Chiavi cache bumpate v31 → v32 con switch a gviz endpoint:
-// invalida tutte le cache locali stantie senza richiedere clear browser.
-const CACHE_KEY = 'pd_prices_v32';
-const CACHE_TIMESTAMP_KEY = 'pd_prices_ts_v32';
-const HISTORY_CACHE_KEY = 'pd_history_v32';
-const HISTORY_CACHE_TS_KEY = 'pd_history_ts_v32';
+// Mappa NAME (chiave in /data/prices.json) → ticker .MI canonico.
+// Il fetcher Python usa nomi corti (VWCE), il resto del codice usa il
+// ticker .MI: questo è il punto di traduzione.
+const NAME_TO_TICKER = {
+  VWCE:  'VWCE.MI',
+  CSNDX: 'CSNDX.MI',
+  CSPX:  'CSPX.MI',
+  SWDA:  'SWDA.MI',
+  VETA:  'VETA.MI',
+};
+
+// Bump cache keys da v32 a v33: invalida cache stantia post-refactor senza
+// richiedere clear browser all'utente.
+const CACHE_KEY = 'pd_prices_v33';
+const CACHE_TIMESTAMP_KEY = 'pd_prices_ts_v33';
+const HISTORY_CACHE_KEY = 'pd_history_v33';
+const HISTORY_CACHE_TS_KEY = 'pd_history_ts_v33';
 const MANUAL_OVERRIDE_KEY = 'pd_manual_prices_v2';
 
 const CACHE_HOURS = 1;
 const FETCH_TIMEOUT_MS = 10000;
+const STALE_THRESHOLD_HOURS = 24;
 
 // -------------------------------------------------------------------------
 // SAFE STORAGE
@@ -68,137 +73,23 @@ const safeStorage = {
 };
 
 // -------------------------------------------------------------------------
-// CSV PARSER
+// FETCH JSON CON TIMEOUT
 // -------------------------------------------------------------------------
-function parseCSV(text) {
-  const rows = [];
-  let row = [], field = '', inQuote = false, i = 0;
-  while (i < text.length) {
-    const c = text[i];
-    if (inQuote) {
-      if (c === '"') {
-        if (text[i + 1] === '"') { field += '"'; i += 2; continue; }
-        inQuote = false; i++; continue;
-      }
-      field += c; i++; continue;
-    }
-    if (c === '"') { inQuote = true; i++; continue; }
-    if (c === ',') { row.push(field); field = ''; i++; continue; }
-    if (c === '\r') { i++; continue; }
-    if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; i++; continue; }
-    field += c; i++;
-  }
-  if (field.length > 0 || row.length > 0) { row.push(field); rows.push(row); }
-  return rows;
-}
-
-function parseItalianNumber(s) {
-  if (!s || typeof s !== 'string') return null;
-  let cleaned = s.trim();
-  if (!cleaned) return null;
-  cleaned = cleaned.replace(/[€\s\u00A0]/g, '');
-  if (cleaned.includes(',')) cleaned = cleaned.replace(/\./g, '').replace(',', '.');
-  const n = parseFloat(cleaned);
-  return isNaN(n) ? null : n;
-}
-
-function parseItalianDate(s) {
-  if (!s || typeof s !== 'string') return null;
-  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-  if (!m) return null;
-  const [, dd, mm, yyyy] = m;
-  return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
-}
-
-// -------------------------------------------------------------------------
-// FETCH CSV
-// -------------------------------------------------------------------------
-async function fetchCSV(url, { bust = false } = {}) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  // Cache-buster solo su force-refresh: rende la URL unica per superare
-  // eventuali cache CDN o proxy che onorano la URL come chiave.
-  const finalUrl = bust ? `${url}${url.includes('?') ? '&' : '?'}_=${Date.now()}` : url;
+async function fetchJson(url) {
+  const ctrl = new AbortController();
+  const timeoutId = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
   try {
-    // cache: 'no-store' disabilita la HTTP cache del browser (altrimenti il
-    // browser può servire una risposta cached anche se forceRefresh è true).
-    const res = await fetch(finalUrl, { signal: controller.signal, cache: 'no-store' });
-    clearTimeout(timeoutId);
+    const res = await fetch(url, { signal: ctrl.signal, cache: 'no-store' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.text();
-  } catch (err) {
+    return await res.json();
+  } finally {
     clearTimeout(timeoutId);
-    throw err;
   }
-}
-
-// -------------------------------------------------------------------------
-// PARSE CURRENT SHEET
-// -------------------------------------------------------------------------
-// Foglio "current" — struttura attesa:
-//   col 0: # | col 1: ETF | col 2: P raw | col 3: Date | col 4: Currency | col 5: P EUR
-function parseCurrentSheet(csvText) {
-  const rows = parseCSV(csvText);
-  const result = {};
-  for (let i = 1; i < rows.length; i++) {
-    const r = rows[i];
-    if (!r || r.length < 6) continue;
-    const ticker = (r[1] || '').trim();
-    if (!ticker) continue;
-    const priceEur = parseItalianNumber(r[5]);
-    const priceRaw = parseItalianNumber(r[2]);
-    const currency = (r[4] || '').trim();
-    const dateStr = r[3];
-    if (priceEur && priceEur > 0) {
-      result[ticker] = {
-        price: priceEur,
-        priceRaw,
-        currency,
-        timestamp: dateStr ? Date.parse(parseItalianDate(dateStr) || '') || Date.now() : Date.now(),
-      };
-    }
-  }
-  return result;
-}
-
-// -------------------------------------------------------------------------
-// PARSE HISTORY SHEET
-// -------------------------------------------------------------------------
-// Foglio "history" — struttura attesa:
-//   col 0: Date VWCE     col 1: Close VWCE (EUR)
-//   col 2: vuota
-//   col 3: Date CNDX     col 4: Close CNDX (USD)
-//   col 5: Currency      col 6: Close CNDX (EUR convertito)
-function parseHistorySheet(csvText) {
-  const rows = parseCSV(csvText);
-  const vwce = [], cndx = [];
-  for (let i = 1; i < rows.length; i++) {
-    const r = rows[i];
-    if (!r) continue;
-
-    // VWCE: col 0 = data, col 1 = close in EUR
-    const dV = parseItalianDate(r[0]);
-    const cV = parseItalianNumber(r[1]);
-    if (dV && cV && cV > 0) vwce.push({ date: dV, close: cV });
-
-    // CNDX: col 3 = data, col 6 = close EUR (preferito) o col 4 = USD raw
-    const dC = parseItalianDate(r[3]);
-    let cC = null;
-    if (r.length >= 7) cC = parseItalianNumber(r[6]);
-    if ((!cC || cC <= 0) && r.length >= 5) cC = parseItalianNumber(r[4]);
-    if (dC && cC && cC > 0) cndx.push({ date: dC, close: cC });
-  }
-  return {
-    'VWCE.MI': vwce,
-    'CSNDX.MI': cndx,
-  };
 }
 
 // -------------------------------------------------------------------------
 // CACHE
 // -------------------------------------------------------------------------
-let _fetchPromise = null;
-
 function getCachedPrices() {
   try {
     const ts = parseInt(safeStorage.get(CACHE_TIMESTAMP_KEY) || '0', 10);
@@ -217,84 +108,103 @@ function getCachedHistory() {
   } catch { return null; }
 }
 
-export function getCacheAgeHours() {
-  const ts = parseInt(safeStorage.get(CACHE_TIMESTAMP_KEY) || '0', 10);
-  if (!ts) return null;
-  return ((Date.now() - ts) / 3600000).toFixed(1);
+// -------------------------------------------------------------------------
+// TRASFORMAZIONI SCHEMA
+// -------------------------------------------------------------------------
+export function transformPricesJson(raw) {
+  const out = {
+    _meta: {
+      updated_at: raw.updated_at || null,
+      updated_ms: raw.updated_at ? Date.parse(raw.updated_at) : null,
+      sources_used: raw.sources_used || {},
+      fx_rates: raw.fx_rates || {},
+    },
+    byTicker: {},
+  };
+  for (const [name, info] of Object.entries(raw.current || {})) {
+    const ticker = NAME_TO_TICKER[name];
+    if (!ticker) continue;
+    if (typeof info.price_eur !== 'number' || info.price_eur <= 0) continue;
+    out.byTicker[ticker] = {
+      ticker,
+      price: info.price_eur,         // canonico: sempre EUR
+      priceRaw: info.price_native,   // prezzo nella valuta nativa
+      currency: info.currency,
+      source: 'data-json',
+      sourceUpstream: info.source,   // 'yfinance' | 'google_sheets' | ...
+      timestamp: out._meta.updated_ms || Date.now(),
+    };
+  }
+  return out;
 }
 
-export function getDataJsonAge() { return getCacheAgeHours(); }
+export function transformHistoryJson(raw) {
+  const out = {
+    _meta: { updated_at: raw.updated_at || null },
+    byTicker: {},
+  };
+  for (const [name, info] of Object.entries(raw.tickers || {})) {
+    const ticker = NAME_TO_TICKER[name];
+    if (!ticker) continue;
+    out.byTicker[ticker] = Array.isArray(info.data) ? info.data : [];
+  }
+  return out;
+}
 
 // -------------------------------------------------------------------------
 // FETCH DEDUPLICATO
 // -------------------------------------------------------------------------
-async function fetchAllSheets(forceRefresh = false) {
+let _pricesPromise = null;
+let _historyPromise = null;
+
+async function fetchPricesJson(forceRefresh = false) {
   if (!forceRefresh) {
     const cached = getCachedPrices();
-    const cachedHist = getCachedHistory();
-    if (cached && cachedHist) return { current: cached, history: cachedHist };
+    if (cached) return cached;
   }
-
-  if (_fetchPromise) return _fetchPromise;
-
-  _fetchPromise = (async () => {
-    let result = { current: {}, history: { 'VWCE.MI': [], 'CSNDX.MI': [] } };
-
-    // Tenta gviz (real-time). Se fallisce o ritorna zero ticker, fallback al /pub.
-    async function tryEndpoint(currentUrl, historyUrl) {
-      const [currentText, historyText] = await Promise.all([
-        fetchCSV(currentUrl, { bust: true }),
-        fetchCSV(historyUrl, { bust: true }),
-      ]);
-      return {
-        current: parseCurrentSheet(currentText),
-        history: parseHistorySheet(historyText),
-      };
-    }
-
+  if (_pricesPromise) return _pricesPromise;
+  _pricesPromise = (async () => {
     try {
-      let parsed;
-      try {
-        parsed = await tryEndpoint(SHEETS_URLS.current, SHEETS_URLS.history);
-        if (Object.keys(parsed.current).length === 0) {
-          throw new Error('gviz returned 0 tickers');
-        }
-      } catch (gvizErr) {
-        console.warn('[priceProvider] gviz failed, fallback to /pub:', gvizErr.message);
-        parsed = await tryEndpoint(SHEETS_URLS.currentFallback, SHEETS_URLS.historyFallback);
-      }
-
-      result.current = parsed.current;
-      result.history = parsed.history;
-
-      if (Object.keys(result.current).length > 0) {
-        safeStorage.set(CACHE_KEY, JSON.stringify(result.current));
-        safeStorage.set(CACHE_TIMESTAMP_KEY, String(Date.now()));
-      }
-      if ((result.history['VWCE.MI']?.length || 0) > 0) {
-        safeStorage.set(HISTORY_CACHE_KEY, JSON.stringify(result.history));
-        safeStorage.set(HISTORY_CACHE_TS_KEY, String(Date.now()));
-      }
+      const raw = await fetchJson(DATA_URLS.prices);
+      const parsed = transformPricesJson(raw);
+      safeStorage.set(CACHE_KEY, JSON.stringify(parsed));
+      safeStorage.set(CACHE_TIMESTAMP_KEY, String(Date.now()));
+      return parsed;
     } catch (err) {
-      console.warn('[priceProvider] all endpoints failed:', err.message);
-      // Fallback su cache anche scaduta
-      try {
-        const oldCached = JSON.parse(safeStorage.get(CACHE_KEY) || '{}');
-        const oldHist = JSON.parse(safeStorage.get(HISTORY_CACHE_KEY) || '{"VWCE.MI":[],"CSNDX.MI":[]}');
-        result.current = oldCached;
-        result.history = oldHist;
-      } catch {}
+      console.warn('[prices] fetch /data/prices.json failed:', err.message);
+      return { _meta: {}, byTicker: {} };
     } finally {
-      _fetchPromise = null;
+      _pricesPromise = null;
     }
-    return result;
   })();
+  return _pricesPromise;
+}
 
-  return _fetchPromise;
+async function fetchHistoryJson(forceRefresh = false) {
+  if (!forceRefresh) {
+    const cached = getCachedHistory();
+    if (cached) return cached;
+  }
+  if (_historyPromise) return _historyPromise;
+  _historyPromise = (async () => {
+    try {
+      const raw = await fetchJson(DATA_URLS.history);
+      const parsed = transformHistoryJson(raw);
+      safeStorage.set(HISTORY_CACHE_KEY, JSON.stringify(parsed));
+      safeStorage.set(HISTORY_CACHE_TS_KEY, String(Date.now()));
+      return parsed;
+    } catch (err) {
+      console.warn('[history] fetch /data/history.json failed:', err.message);
+      return { _meta: {}, byTicker: {} };
+    } finally {
+      _historyPromise = null;
+    }
+  })();
+  return _historyPromise;
 }
 
 // -------------------------------------------------------------------------
-// MANUAL OVERRIDES
+// MANUAL OVERRIDES (invariate da v3)
 // -------------------------------------------------------------------------
 export function setManualPrice(ticker, price) {
   try {
@@ -321,9 +231,31 @@ export function getManualPriceAge(ticker) {
 
 export function hasFreshManualPrices() {
   const manuals = getManualPrices();
-  // Considera tutti i ticker noti (allocation + legacy)
   const allTickers = Object.values(ISIN_TO_TICKER);
   return allTickers.some(t => manuals[t]?.price > 0);
+}
+
+// -------------------------------------------------------------------------
+// AGE / STALENESS
+// -------------------------------------------------------------------------
+// Restituisce l'età (h) del campo `updated_at` del JSON, non l'età della
+// cache locale: quello che l'utente vuole sapere è quando il cron ha
+// effettivamente aggiornato i dati. Numero arrotondato a 1 decimale.
+export function getCacheAgeHours() {
+  let payload;
+  try { payload = JSON.parse(safeStorage.get(CACHE_KEY) || 'null'); }
+  catch { return null; }
+  const ms = payload?._meta?.updated_ms;
+  if (!ms) return null;
+  return ((Date.now() - ms) / 3600000).toFixed(1);
+}
+
+export function getDataJsonAge() { return getCacheAgeHours(); }
+
+export function isDataStale() {
+  const age = getCacheAgeHours();
+  if (age === null) return true;
+  return parseFloat(age) > STALE_THRESHOLD_HOURS;
 }
 
 // -------------------------------------------------------------------------
@@ -341,15 +273,11 @@ export async function getPriceFor(ticker, opts = {}) {
     };
   }
 
-  // 2. Google Sheets
-  const sheets = await fetchAllSheets(forceRefresh);
-  if (sheets.current?.[ticker]?.price > 0) {
-    const p = sheets.current[ticker];
-    return {
-      ticker, price: p.price,
-      source: 'sheets-auto', timestamp: p.timestamp,
-      currency: p.currency, priceRaw: p.priceRaw,
-    };
+  // 2. /data/prices.json (via cache or fresh fetch)
+  const data = await fetchPricesJson(forceRefresh);
+  const rec = data.byTicker?.[ticker];
+  if (rec && rec.price > 0) {
+    return { ...rec };
   }
 
   // 3. Fallback null → portfolioEngine userà currentPriceFallback dal config
@@ -361,13 +289,9 @@ export async function getPriceFor(ticker, opts = {}) {
  * Lookup avviene per ticker .MI (es. 'VWCE.MI', 'CSPX.MI').
  */
 export async function getAllPrices(forceRefresh = false) {
-  // Costruisce lista completa da TUTTI gli initialHoldings, mappando ISIN → ticker
   const allTickers = new Set();
 
-  // Aggiungi ticker da config.allocation (target)
   config.allocation.forEach(a => allTickers.add(a.ticker));
-
-  // Aggiungi ticker da initialHoldings (legacy + target) via ISIN map
   (config.initialHoldings || []).forEach(h => {
     const ticker = ISIN_TO_TICKER[h.isin];
     if (ticker) allTickers.add(ticker);
@@ -379,14 +303,14 @@ export async function getAllPrices(forceRefresh = false) {
 }
 
 /**
- * Ritorna lo storico per un ticker (VWCE.MI o CSNDX.MI supportati).
+ * Storico per un ticker (VWCE.MI o CSNDX.MI supportati).
  * Per altri ticker ritorna data: null.
  */
 export async function getHistoricalPrices(ticker, daysBack = 252) {
-  const sheets = await fetchAllSheets(false);
-  const series = sheets.history?.[ticker];
+  const data = await fetchHistoryJson(false);
+  const series = data.byTicker?.[ticker];
   if (series && series.length > 0) {
-    return { ticker, data: series.slice(-daysBack), source: 'sheets-auto' };
+    return { ticker, data: series.slice(-daysBack), source: 'data-json' };
   }
   return { ticker, data: null, source: 'unavailable' };
 }
@@ -402,6 +326,6 @@ export function clearAllCache() {
 export function getTickerForISIN(isin) { return ISIN_TO_TICKER[isin] || null; }
 export function getISINForTicker(ticker) { return TICKER_TO_ISIN[ticker] || null; }
 
-// Compat stubs
+// Vestigial: alcuni componenti legacy potrebbero ancora invocarli.
 export function setApiKey() {}
 export function getApiKey() { return ''; }
