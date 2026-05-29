@@ -25,6 +25,7 @@ Failure policy:
 
 import csv
 import json
+import math
 import re
 import sys
 import warnings
@@ -89,17 +90,30 @@ SHEETS_TIMEOUT_S = 15
 def fetch_yf_price(yf_ticker):
     """Restituisce (price, currency_string_or_None). Solleva su fallimento.
 
-    NOTA IMPLEMENTATIVA: si usa history(period='5d').Close.iloc[-1] invece
-    di fast_info.last_price perché su ticker a basso volume (es. VETA.L)
+    NOTA IMPLEMENTATIVA: si usa history(period='5d').Close invece di
+    fast_info.last_price perché su ticker a basso volume (es. VETA.L)
     fast_info ritorna None. Verificato nel deep-dive smoke-test v2 (PR #16):
     fast_info.last_price = None mentre history.last_close = 20.5653 GBP.
-    history() è il path più affidabile per il close più recente disponibile.
+
+    Sui ticker europei (.MI, .AS, .L) yfinance può restituire una riga
+    finale per la sessione corrente non ancora consolidata con Close=NaN.
+    Selezioniamo l'ultimo close *finito e positivo* (TASK 0 — fix bug NaN).
     """
     t = yf.Ticker(yf_ticker)
     hist = t.history(period="5d", auto_adjust=False)
     if hist is None or hist.empty:
         raise RuntimeError("empty_history")
-    price = float(hist["Close"].iloc[-1])
+    closes = hist["Close"].dropna()
+    closes = closes[closes > 0]
+    if closes.empty:
+        raise RuntimeError("no_finite_close")
+    dropped = len(hist) - len(closes)
+    if dropped > 0:
+        print(f"[yf:{yf_ticker}] dropped {dropped} non-finite close row(s)",
+              file=sys.stderr)
+    price = float(closes.iloc[-1])
+    if not math.isfinite(price) or price <= 0:
+        raise RuntimeError("no_finite_close")
     currency = None
     try:
         info = t.info or {}
@@ -116,13 +130,20 @@ def fetch_yf_history(yf_ticker, days):
     if hist is None or hist.empty:
         raise RuntimeError("empty_history")
     out = []
+    dropped = 0
     for date, row in hist.iterrows():
         close = row.get("Close")
-        if close and close > 0:
+        is_finite = close is not None and math.isfinite(close) and close > 0
+        if is_finite:
             out.append({
                 "date": date.strftime("%Y-%m-%d"),
                 "close": round(float(close), 4),
             })
+        else:
+            dropped += 1
+    if dropped > 0:
+        print(f"[hist:{yf_ticker}] dropped {dropped} non-finite close row(s)",
+              file=sys.stderr)
     return out
 
 
@@ -293,7 +314,9 @@ def fetch_current_for_ticker(name, info, fx_eur_to_gbp):
     if currency == "EUR":
         price_eur = price_native
     elif currency == "GBP":
-        if fx_eur_to_gbp is None or fx_eur_to_gbp <= 0:
+        if (fx_eur_to_gbp is None
+                or not math.isfinite(fx_eur_to_gbp)
+                or fx_eur_to_gbp <= 0):
             print(f"[{name}] FX rate non disponibile, conversione GBP→EUR impossibile", file=sys.stderr)
             return None, "FX_FAILED"
         # EURGBP=X = GBP per 1 EUR. Per ottenere EUR: price_gbp / EURGBP.
@@ -372,15 +395,17 @@ def main():
 
     health["updated_at"] = now_iso
 
-    # Scrivi i 3 file
+    # Scrivi i 3 file. allow_nan=False: se un NaN raggiungesse comunque
+    # l'output, fallisce qui (fail-loud) invece di produrre token "NaN"
+    # non-standard che farebbero crashare JSON.parse a valle.
     (DATA_DIR / "prices.json").write_text(
-        json.dumps(out_current, indent=2, ensure_ascii=False) + "\n"
+        json.dumps(out_current, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
     )
     (DATA_DIR / "history.json").write_text(
-        json.dumps(out_history, indent=2, ensure_ascii=False) + "\n"
+        json.dumps(out_history, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
     )
     (DATA_DIR / "health.json").write_text(
-        json.dumps(health, indent=2, ensure_ascii=False) + "\n"
+        json.dumps(health, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
     )
 
     # Summary stdout

@@ -5,6 +5,8 @@
 #   - 07:30 UTC: prima del giorno di esecuzione PAC (giorno 2 del mese)
 #   - 18:30 UTC: dopo chiusura Borsa europea, dati più freschi
 # Permette anche trigger manuale via workflow_dispatch.
+# Sui PR che toccano lo script o i suoi test, gira solo la suite di test
+# (no fetch, no commit) — gating in review.
 # Commit automatico di /data/{prices,history,health}.json sul branch corrente
 # se ci sono cambiamenti rispetto al commit precedente.
 # =============================================================================
@@ -15,6 +17,11 @@ on:
     - cron: '30 7 * * *'
     - cron: '30 18 * * *'
   workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/scripts/**'
+      - '.github/workflows/update-prices.yml'
+      - 'tests/test_fetch_prices.py'
 
 # FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 fa girare le JavaScript actions
 # (actions/checkout, actions/setup-python) sul runtime Node 24 invece
@@ -45,10 +52,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r .github/scripts/requirements.txt
 
+      # Gating: i test di fetch_prices.py girano sempre, anche sui PR.
+      # Un test rosso blocca fetch e commit.
+      - name: Run fetch_prices tests
+        run: python -m unittest discover -s tests -p 'test_*.py'
+
       - name: Run price fetcher
+        if: github.event_name != 'pull_request'
         run: python3 .github/scripts/fetch_prices.py
 
       - name: Commit & push if data changed
+        if: github.event_name != 'pull_request'
         run: |
           set -e
           git config user.name "github-actions[bot]"
