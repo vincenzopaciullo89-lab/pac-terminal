@@ -7,6 +7,14 @@ on:
 
   workflow_dispatch:
 
+# FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 fa girare actions/checkout e
+# actions/setup-python sul runtime Node 24 invece del Node 20 deprecato
+# (sunset ~2 giugno 2026). Soluzione preferita al bump versione-per-versione
+# di ciascuna action: agisce uniformemente, niente regressioni da pinning.
+# Coerente con la stessa scelta in update-prices.yml (PR #18).
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   check-drawdown:
     runs-on: ubuntu-latest
