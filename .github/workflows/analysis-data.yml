@@ -1,0 +1,59 @@
+# =============================================================================
+# analysis-data.yml — fetch on-demand di serie storiche per analisi
+# =============================================================================
+# SOLO workflow_dispatch (nessun cron): si lancia a mano dalla tab Actions
+# quando serve un dataset per il backtest (Task D) o per l'analisi di asset
+# allocation (TASK 5).
+#
+# Esegue scripts/fetch_analysis_history.py, che scrive data/analysis/<name>.json
+# (period="max", EUR). I file finiscono in data/analysis/, cartella separata
+# dal payload del sito — il front-end NON li carica.
+# =============================================================================
+name: analysis-data
+
+on:
+  workflow_dispatch:
+
+# Coerente con update-prices.yml / drawdown-alert.yml: forza Node 24 sulle
+# JavaScript actions (Node 20 in deprecation, sunset ~2 giugno 2026).
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: .github/scripts/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r .github/scripts/requirements.txt
+
+      - name: Fetch analysis history
+        run: python3 scripts/fetch_analysis_history.py
+
+      - name: Commit & push if data changed
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/analysis/
+          if git diff --cached --quiet; then
+            echo "No analysis data changes; nothing to commit."
+          else
+            # [skip ci] previene loop di workflow ricorsivi.
+            git commit -m "data(analysis): update analysis history @ $(date -u +%Y-%m-%dT%H:%M:%SZ) [skip ci]"
+            git push
+          fi
