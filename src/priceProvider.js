@@ -124,7 +124,17 @@ export function transformPricesJson(raw) {
   for (const [name, info] of Object.entries(raw.current || {})) {
     const ticker = NAME_TO_TICKER[name];
     if (!ticker) continue;
-    if (typeof info.price_eur !== 'number' || info.price_eur <= 0) continue;
+    // Skip difensivo su prezzo non valido. Number.isFinite() cattura anche
+    // NaN (typeof NaN === 'number' lo lascerebbe passare). Post-TASK 0 il cron
+    // non dovrebbe MAI produrre NaN, ma se accadesse va VISTO in console, non
+    // sparire silenziosamente — è esattamente l'anti-pattern del bug NaN.
+    if (!Number.isFinite(info.price_eur) || info.price_eur <= 0) {
+      console.warn(
+        `[priceProvider] ${name}: prezzo non valido in data/prices.json ` +
+        `(price_eur=${info.price_eur}, upstream=${info.source}) — skip`,
+      );
+      continue;
+    }
     out.byTicker[ticker] = {
       ticker,
       price: info.price_eur,         // canonico: sempre EUR
