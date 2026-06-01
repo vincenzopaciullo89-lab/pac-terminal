@@ -61,7 +61,13 @@ TICKERS = {
 }
 
 TICKERS_WITH_HISTORY = ["VWCE", "CSNDX"]
-HISTORY_DAYS = 380
+# Storia completa disponibile per ticker (yfinance period="max"): copre
+# VWCE.MI dal lancio (set 2019) e CSNDX.MI (dal 2010). Prerequisito condiviso
+# per ddATH_real (TASK 3.5), backtest (Task D) e analisi ETF (TASK 5).
+HISTORY_PERIOD = "max"
+# Cap dello slice usato SOLO dal fallback Google Sheets (out[-HISTORY_DAYS:]).
+# Volutamente grande (~32 anni di trading days) per non troncare la storia.
+HISTORY_DAYS = 8000
 
 # Soglia per alert (Task F): N fallimenti consecutivi del ticker prima di
 # triggerare email al maintainer.
@@ -123,10 +129,14 @@ def fetch_yf_price(yf_ticker):
     return price, currency
 
 
-def fetch_yf_history(yf_ticker, days):
-    """Lista di dict {date: YYYY-MM-DD, close: float}. Solleva su fallimento."""
+def fetch_yf_history(yf_ticker, period=HISTORY_PERIOD):
+    """Lista di dict {date: YYYY-MM-DD, close: float}. Solleva su fallimento.
+
+    period: stringa yfinance ("max", "1y", "380d", ...). Default "max" per
+    coprire l'intera storia disponibile del ticker.
+    """
     t = yf.Ticker(yf_ticker)
-    hist = t.history(period=f"{days}d", auto_adjust=False)
+    hist = t.history(period=period, auto_adjust=False)
     if hist is None or hist.empty:
         raise RuntimeError("empty_history")
     out = []
@@ -340,7 +350,7 @@ def fetch_current_for_ticker(name, info, fx_eur_to_gbp):
 def fetch_history_for_ticker(name, info):
     """Ritorna (data_list, source_str). Lista vuota se entrambi falliscono."""
     try:
-        data = fetch_yf_history(info["yf"], HISTORY_DAYS)
+        data = fetch_yf_history(info["yf"], HISTORY_PERIOD)
         return data, "yfinance"
     except Exception as e:
         print(f"[hist:{name}] yfinance failed: {type(e).__name__}: {e}", file=sys.stderr)
