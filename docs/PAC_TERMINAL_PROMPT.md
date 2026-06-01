@@ -27,6 +27,8 @@ Republic. JavaScript vanilla modularizzato in `src/`. Repo:
 | Asset attivi PAC | VWCE (90% del flusso) + CSNDX (10%) |
 | Regime fiscale | amministrato (Trade Republic sostituto d'imposta) |
 | Domicilio fiscale | Italia |
+| Obiettivo asset allocation (L17) | "alto rendimento atteso" — non income, non capital preservation |
+| Cassa boost cumulata disponibile | €6–9K (per scenari -50% × 18 mesi senza vendere ETF) |
 
 ---
 
@@ -43,9 +45,13 @@ Republic. JavaScript vanilla modularizzato in `src/`. Repo:
        ├─ FX EUR→GBP per VETA (vedi §4)
        └─ commit /data/{prices,history,health}.json [skip ci]
 
-[2] Sito client-side — src/priceProvider.js v4
+[2] Sito client-side — src/priceProvider.js
+    Stato attuale (main): v3.1 — legge live da Google Sheets CSV.
+    Stato target (post-B.4, PR #20 aperta non mergeata):
     └─ fetch('data/prices.json')   (same-origin, no CORS)
     └─ fetch('data/history.json')
+    └─ badge "Dati obsoleti · Nh fa" se >24h dall'ultimo cron
+    └─ NO fallback live Google Sheets dal browser
     └─ cache localStorage TTL 1h
     └─ NESSUNA chiamata diretta a docs.google.com né a yfinance
 
@@ -69,9 +75,17 @@ Republic. JavaScript vanilla modularizzato in `src/`. Repo:
 
 ### Macchina degli stati
 
-- **Indicatore di trigger**: `dd252D` (drawdown da massimo rolling 252 giorni di Borsa). In `metricsEngine.computePriceMetrics`. Calcolato sul prezzo del solo VWCE (asset di riferimento, 90% del flusso).
-- **Composite secondario**: `0.6·dd12M + 0.4·madMA200`. Usato come `min(dd12M, composite)` in `strategyEngine.determineTier`.
+**Stato corrente (main, post-Task A)**:
+- Trigger value: `min(dd12M, composite)` dove `composite = 0.6·dd12M + 0.4·madMA200`.
+- Indicatore primario: `dd252D` su VWCE. In `portfolioEngine.computePriceMetrics` (o `metricsEngine` post-B.5). Calcolato sul prezzo del solo VWCE (asset di riferimento, 90% del flusso).
 - **Cap operativo**: 6 mesi/anno di boost (`config.pac.capBoostMonthsPerYear`).
+
+**Direzione futura — Trigger ibrido A+B+C (TASK 3.5, da implementare DOPO il backtest Task D)**:
+- **A** = `ddATH_real` — drawdown da peak della history disponibile (idealmente dal lancio VWCE.MI in settembre 2019, ~7 anni di daily). → Trigger primario.
+- **B** = `dd252D` — finestra rolling 252 giorni. → Filtro di declassamento (impedisce di rimanere in tier alto a recupero avvenuto).
+- **C** = `z21D` — z-score del rendimento 21d corrente vs distribuzione storica. → SOLO contesto visivo nella UI, NESSUN ruolo nel trigger.
+- Composite 0.6/0.4 viene rimosso; `weightDD12M`/`weightMA200` in `config.triggerComposite` diventano dead code da eliminare.
+- **Vincolo**: le soglie (tier + soglia di declassamento di B) NON si inventano a tavolino — escono dal backtest Task D. La history estesa è il prerequisito condiviso.
 
 ### Tabella tier (post-A.1, multiplier rivisti per rispettare cap €1.000)
 
@@ -163,7 +177,7 @@ env:
 | Workflow | Env var presente | Note |
 |---|---|---|
 | `update-prices.yml` | ✅ | PR #18 |
-| `drawdown-alert.yml` | ⏳ | Pre-esistente, da fixare prima del 2 giugno 2026 |
+| `drawdown-alert.yml` | ✅ | PR #22 (merged), in tempo per deadline 2 giugno 2026 |
 
 Quando una versione `@v5+` di tutte le action JS sarà disponibile e
 stabile, si potrà rimuovere l'env var bumpando le versioni.
@@ -192,6 +206,9 @@ prese a valle dei due round di diagnostica preflight (PR #15-#16).
 | dd252D rinominato da ddATH | Il calcolo usa una finestra rolling 252 giorni, non un vero ATH. Quando lo storico sarà esteso (>5 anni), si potrà reintrodurre un `ddATH` autentico. |
 | MA200 richiede ≥200 close | Una "MA200" su 50-100 punti è rumorosa; preferiamo `null` (UI "—") a pseudo-precisione. |
 | Multiplier tier ridistribuiti a 1.0/1.1/1.3/1.6/2.0 | T4 era 2.5x = €1.250, violava cap €1.000. Test strutturale in `tests/strategy.test.js` blocca regressioni future. |
+| **TASK 0 — fix bug NaN nei prezzi correnti (PR #24)** | yfinance restituisce trailing-NaN per la sessione corrente non chiusa sui ticker .MI/.AS. `fetch_yf_price` ora droppa NaN e usa l'ultimo close finito; `allow_nan=False` su tutti i JSON output (fail-loud); 9 test Python con CI gating. Diagnosticato sul commit 22:53 del 26/05/2026, bug presente dal 19/05 (primissimo run serale). |
+| **L17 — Obiettivo asset allocation: "alto rendimento atteso"** | Vincolo strategico per le valutazioni della Task O1/TASK 5: la candidate list di portafogli alternativi va pesata in funzione di rendimento atteso a 10–20 anni, non di volatilità minima o income. |
+| **Trigger ibrido A+B+C (TASK 3.5)** | Sostituisce composite 0.6/0.4. `ddATH_real` trigger primario su history estesa, `dd252D` filtro di declassamento, `z21D` solo contesto visivo. Prerequisito: history estesa (period="max"). Soglie calibrate dal backtest Task D, NON a tavolino. |
 | TER CSNDX 0.30% (era 0.33%) | Valore ufficiale iShares verificato. Onestà parametri. |
 | `metricsEngine` separato da `portfolioEngine` | `computePriceMetrics` deve essere importabile da Node (Task F alert daily server-side). `portfolioEngine` mantiene re-export per back-compat. |
 
@@ -203,8 +220,11 @@ prese a valle dei due round di diagnostica preflight (PR #15-#16).
 |---|---|---|
 | A | Bug fix immediati (tier cap, ddATH, MA200, TER CSNDX) | ✅ #14 |
 | B | Architettura prezzi (yfinance + Sheets fallback) | ✅ #18 |
-| B.4 | Refactor priceProvider per leggere /data/*.json | ⏳ #20 (DRAFT) |
+| TASK 0 | Fix bug NaN trailing-row nei prezzi correnti | ✅ #24 |
+| chore | Force Node 24 su drawdown-alert.yml | ✅ #22 |
+| B.4 | Refactor priceProvider per leggere /data/*.json | ⏳ #20 |
 | B.5 | Estrazione metricsEngine per Node-compat | ⏳ #19 |
+| 3.5 | Trigger ibrido A+B+C (sostituisce composite) | ⏳ Dopo Task D; richiede history estesa |
 | C | Coerenza Monte Carlo ↔ Dashboard | ⏳ |
 | D | Backtest documentato | ⏳ |
 | E | Migliorie grafici (fan chart, box plot, etichette) | ⏳ |
