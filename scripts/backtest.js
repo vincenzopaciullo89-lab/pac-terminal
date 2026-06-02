@@ -234,6 +234,82 @@ function gridSearch(schedule, finalPrice) {
 }
 
 // -----------------------------------------------------------------------------
+// REGOLA MINIMA (2 soglie su ddATH, niente filtro B di default).
+// Da spec utente: il sistema tattico è mantenuto come MECCANISMO COMPORTAMENTALE,
+// non per rendimento atteso. Massima semplicità: 3 stati invece di 5 tier.
+//   ddATH <= -20%  → boost +100% (€1.000)
+//   ddATH <= -10%  → boost +50%  (€750)
+//   altrimenti     → €500, no boost
+// Cap L16 (6 boost/anno) resta.
+// Filtro B opzionale: se attivo, declassa di 1 livello quando dd252D > -X%.
+// -----------------------------------------------------------------------------
+function simulateMinimal(schedule, finalPrice, opts = {}) {
+  const { useFilterB = false, filterX = 0.03 } = opts;
+  let sharesFixed = 0, investedFixed = 0;
+  let sharesTact = 0, investedTact = 0, boostTotal = 0;
+  let sharesDumb = 0;
+  let boostMonths = 0;
+  const boostByYear = new Map();
+  const monthlyBoosts = [];
+  const levelCounts = [0, 0, 0]; // [no-boost, +50%, +100%]
+
+  for (const s of schedule) {
+    sharesFixed += BASE_MONTHLY / s.price;
+    investedFixed += BASE_MONTHLY;
+
+    const year = s.date.slice(0, 4);
+    const usedThisYear = boostByYear.get(year) || 0;
+
+    // Regola minima
+    let level = 0;
+    if (s.ddATH <= -0.20) level = 2;
+    else if (s.ddATH <= -0.10) level = 1;
+
+    if (useFilterB && level > 0 && s.dd252D > -filterX) level -= 1;
+    if (level > 0 && usedThisYear >= MAX_BOOST_MONTHS_PER_YEAR) level = 0;
+
+    const total = level === 2 ? 1000 : level === 1 ? 750 : 500;
+    const boost = total - BASE_MONTHLY;
+    if (boost > 0) { boostByYear.set(year, usedThisYear + 1); boostMonths += 1; }
+    levelCounts[level] += 1;
+    sharesTact += total / s.price;
+    investedTact += total;
+    boostTotal += boost;
+    monthlyBoosts.push({ date: s.date, boost });
+  }
+
+  const nMonths = schedule.length;
+  const flatBoost = boostTotal / nMonths;
+  for (const s of schedule) sharesDumb += flatBoost / s.price;
+
+  const finalFixed = sharesFixed * finalPrice;
+  const finalTact = sharesTact * finalPrice;
+  const finalDumb = (sharesFixed + sharesDumb) * finalPrice;
+
+  let maxCash = 0;
+  for (let i = 0; i < monthlyBoosts.length; i++) {
+    let sum = 0;
+    for (let j = i; j < Math.min(i + CASH_WINDOW_MONTHS, monthlyBoosts.length); j++) sum += monthlyBoosts[j].boost;
+    if (sum > maxCash) maxCash = sum;
+  }
+
+  const extraWealth = finalTact - finalFixed;
+  return {
+    label: useFilterB ? `MIN+filterB ${(filterX * 100).toFixed(0)}%` : 'MIN',
+    finalFixed, finalTact, finalDumb,
+    investedFixed, investedTact, boostTotal,
+    extraWealth,
+    efficiency: boostTotal > 0 ? extraWealth / boostTotal : 0,
+    timingAlpha: finalTact - finalDumb,
+    boostMonths, avgBoostsPerYear: boostMonths / (nMonths / 12),
+    maxCash, cashOk: maxCash <= CASH_BUDGET_MAX,
+    levelCounts,
+    retFixed: finalFixed / investedFixed - 1,
+    retTact: finalTact / investedTact - 1,
+  };
+}
+
+// -----------------------------------------------------------------------------
 // Output helpers
 // -----------------------------------------------------------------------------
 const eur = n => '€' + Math.round(n).toLocaleString('it-IT');
@@ -300,8 +376,17 @@ function main() {
   console.log(`  di cui TIMING alpha  : ${eur(bestAbs.timingAlpha)} (resto = solo "investito di più")`);
   console.log(`  Boost totale versato : ${eur(bestAbs.boostTotal)} su ${bestAbs.boostMonths} mesi`);
 
-  // --- Sub-periodi: stabilità soglie ---
-  console.log('\n--- ROBUSTEZZA: sub-periodi (best per efficienza D3) ---');
+  // --- €600 espresso come % del totale ---
+  console.log('\n--- TIMING ALPHA in proporzione al totale ---');
+  console.log(`Timing alpha del miglior tattico:           ${eur(bestAbs.timingAlpha)}`);
+  console.log(`Totale PAC fisso finale:                    ${eur(ref.finalFixed)}`);
+  console.log(`Timing alpha / totale fisso:                ${pct(bestAbs.timingAlpha / ref.finalFixed)}`);
+  console.log(`Extra assoluto / totale fisso:              ${pct(bestAbs.extraWealth / ref.finalFixed)}`);
+  console.log(`(per riferimento: il timing alpha medio sulla griglia, intervallo [${eur(Math.min(...full.map(r=>r.timingAlpha)))}, ${eur(Math.max(...full.map(r=>r.timingAlpha)))}])`);
+
+  // --- Sub-periodi: stabilità soglie (TOP-3, non solo vincitore) ---
+  console.log('\n--- ROBUSTEZZA: sub-periodi (top-3 per efficienza D3) ---');
+  const subResults = {};
   for (const [label, [s, e]] of Object.entries({
     '2009-2017': ['2009-01-01', '2017-12-31'],
     '2018-2026': ['2018-01-01', '2026-12-31'],
@@ -309,14 +394,56 @@ function main() {
     const sub = dateFilterSchedule(schedule, s, e);
     const fp = sub[sub.length - 1].price;
     const g = gridSearch(sub, fp);
-    const w = g[0];
-    console.log(`${label} (${sub.length} mesi): best = ${w.label} | B=${pct(w.filterX)} | eff ${w.efficiency.toFixed(2)}x | extra ${eur(w.extraWealth)} | boost ${eur(w.boostTotal)}`);
+    subResults[label] = g;
+    console.log(`\n${label} (${sub.length} mesi, prezzo finale ${fp}):`);
+    for (let i = 0; i < 3; i++) {
+      const r = g[i];
+      console.log(`  ${i + 1}° ${r.label.padEnd(19)} B=${pct(r.filterX).padStart(5)} | eff ${r.efficiency.toFixed(2)}x | extra ${eur(r.extraWealth).padStart(8)} | timingα ${eur(r.timingAlpha).padStart(6)} | boost ${eur(r.boostTotal).padStart(6)}`);
+    }
   }
-  console.log('\nNOTA: i sub-periodi usano il proprio prezzo finale (non quello del 2026):');
-  console.log('servono a vedere se la combinazione OTTIMA cambia tra regimi, non a confrontare i livelli.');
+  // Verifica stabilità: top-1 e top-2 sono gli stessi set in entrambi i sub-periodi?
+  const a1 = subResults['2009-2017'][0], b1 = subResults['2018-2026'][0];
+  const sameWinner = (a1.label === b1.label && a1.filterX === b1.filterX);
+  console.log(`\nVincitore stabile tra sub-periodi: ${sameWinner ? 'SI' : 'NO'}`);
 
-  // export risultati per il report
-  return { meta, schedule, full, ref, bestAbs };
+  // --- Mini-backtest: REGOLA MINIMA (2 soglie) vs alternative ---
+  console.log('\n--- MINI-BACKTEST: regola minima 2-soglie (intera serie) ---');
+  console.log('Stati: ddATH<=-20% → €1000 | ddATH<=-10% → €750 | altrimenti €500');
+  console.log('Cap L16 (6 boost/anno) attivo in tutte le varianti.\n');
+
+  const minNoFilter = simulateMinimal(schedule, finalPrice, { useFilterB: false });
+  const minWithB3   = simulateMinimal(schedule, finalPrice, { useFilterB: true, filterX: 0.03 });
+  const minWithB5   = simulateMinimal(schedule, finalPrice, { useFilterB: true, filterX: 0.05 });
+
+  const bestC = full.find(r => r.label.startsWith('C ')); // miglior C per riferimento
+  const bestA = full.find(r => r.label.startsWith('A ')); // set A (impatto max)
+
+  console.log('strategia                        | parametri | mesi boost | boost €   | extra €    | timingα € | eff D3 | finale €   | retMW    | maxCassa');
+  function row(label, p, r) {
+    console.log(
+      `${label.padEnd(32)} | ${p.padEnd(9)} | ${String(r.boostMonths).padStart(5)} (${r.avgBoostsPerYear.toFixed(1)}/y) | ${eur(r.boostTotal).padStart(7)} | ${eur(r.extraWealth).padStart(8)}  | ${eur(r.timingAlpha).padStart(7)}  | ${r.efficiency.toFixed(2).padStart(4)}x | ${eur(r.finalTact).padStart(8)}  | ${pct(r.retTact).padStart(7)}  | ${eur(r.maxCash).padStart(6)}`,
+    );
+  }
+  row('PAC FISSO PURO (no boost)',     '—',        { boostMonths:0, avgBoostsPerYear:0, boostTotal:0, extraWealth:0, timingAlpha:0, efficiency:0, finalTact: ref.finalFixed, retTact: ref.retFixed, maxCash:0 });
+  row('MINIMA (no filtro B)',          '2 soglie', minNoFilter);
+  row('MINIMA + filtro B=3%',          '2+filtro', minWithB3);
+  row('MINIMA + filtro B=5%',          '2+filtro', minWithB5);
+  row('5-TIER set C B=5% (best D3)',   '5 tier+B', bestC);
+  row('5-TIER set A B=3% (max impatto)','5 tier+B', bestA);
+
+  // --- Stabilità della regola minima sui sub-periodi ---
+  console.log('\n--- Regola minima sui sub-periodi (stabilità) ---');
+  for (const [label, [s, e]] of Object.entries({
+    '2009-2017': ['2009-01-01', '2017-12-31'],
+    '2018-2026': ['2018-01-01', '2026-12-31'],
+  })) {
+    const sub = dateFilterSchedule(schedule, s, e);
+    const fp = sub[sub.length - 1].price;
+    const r = simulateMinimal(sub, fp, { useFilterB: false });
+    console.log(`${label}: mesi boost ${r.boostMonths} | boost ${eur(r.boostTotal)} | extra ${eur(r.extraWealth)} | timingα ${eur(r.timingAlpha)} | eff ${r.efficiency.toFixed(2)}x`);
+  }
+
+  return { meta, schedule, full, ref, bestAbs, minNoFilter, minWithB3, minWithB5, subResults };
 }
 
 main();
