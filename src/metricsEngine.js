@@ -26,6 +26,11 @@
  *        (in tal caso valgono `null`).
  *
  * Schema di output:
+ *   - peakATH           : massimo dell'intera history disponibile (incluso
+ *                         currentPrice). Walk-forward: il caller passa la
+ *                         serie limitata al "presente".
+ *   - ddATH             : drawdown da peakATH, in frazione (es. -0.12 = -12%).
+ *                         Trigger primario del sistema tattico (Task D).
  *   - high252D, high12M : massimi rolling 252 giorni (alias finché lo
  *                         storico disponibile coincide con quella finestra).
  *   - dd252D, dd12M     : drawdown corrispondenti, in frazione (es. -0.07).
@@ -45,11 +50,20 @@ export function computePriceMetrics(historicalPrices, currentPrice) {
   if (!Array.isArray(historicalPrices) || historicalPrices.length < 2) return null;
   const closes = historicalPrices.map(d => d.close);
 
-  // Drawdown da massimo rolling 252 giorni. Esposto come `dd252D`
-  // (non `ddATH`): la finestra di history disponibile dal provider corrente
-  // è ~1 anno, quindi un vero ATH non è calcolabile. Quando lo storico sarà
-  // esteso (Task B+), si potrà reintrodurre un `ddATH` autentico sulla serie
-  // completa.
+  // ddATH_real: drawdown dal massimo dell'intera history disponibile fino
+  // a ORA (peak walk-forward). Trigger primario del sistema tattico — vedi
+  // docs/TASK_D_BACKTEST.md.
+  // NB walk-forward: il caller passa già una serie limitata al "presente"
+  // (in produzione: history.json fino a oggi; nel backtest: slice fino al
+  // mese simulato). Qui ci si limita a calcolare il max sui close ricevuti +
+  // il prezzo corrente, senza guardare dati che il caller non ha incluso.
+  const peakATH = Math.max(...closes, currentPrice);
+  const ddATH = peakATH > 0 ? (currentPrice / peakATH) - 1 : 0;
+
+  // dd252D: drawdown dal massimo rolling 252 giorni. Usato come filtro di
+  // declassamento nella vecchia 5-tier; con la regola minima 2-soglie il
+  // filtro è dead code (vedi Task D), ma la metrica resta esposta come
+  // indicatore in dashboard.
   const last252 = closes.slice(-252);
   const high252D = Math.max(...last252, currentPrice);
   const dd252D = high252D > 0 ? (currentPrice / high252D) - 1 : 0;
@@ -98,6 +112,7 @@ export function computePriceMetrics(historicalPrices, currentPrice) {
   else if (volRolling && volRolling > 0.18) regime = 'elevated';
 
   return {
+    peakATH, ddATH,
     high252D, high12M, dd252D, dd12M,
     ma200, ma10m: ma200, madMA200,
     volRolling, zScore, regime,

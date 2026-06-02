@@ -36,11 +36,17 @@ describe('computePriceMetrics — guardia MA200', () => {
   });
 });
 
-describe('computePriceMetrics — rinomina dd252D (Task A.2)', () => {
-  test('return contiene dd252D, non più ddATH', () => {
+describe('computePriceMetrics — schema dd (Task A.2 + Task D)', () => {
+  // Task A.2: il vecchio campo `ddATH` era stato rinominato in `dd252D` perché
+  // la finestra disponibile era rolling 252g, non vero ATH.
+  // Task D: con history estesa (period="max"), `ddATH_real` è di nuovo
+  // calcolabile ed è il trigger primario del sistema tattico — esposto come
+  // `ddATH` accanto a `peakATH`. dd252D resta come indicatore secondario.
+  test('return contiene sia dd252D sia ddATH (Task D — history estesa)', () => {
     const m = computePriceMetrics(syntheticHistory(252), 400);
     assert.ok('dd252D' in m, 'campo dd252D mancante');
     assert.ok('high252D' in m, 'campo high252D mancante');
-    assert.ok(!('ddATH' in m), 'campo ddATH non dovrebbe esistere più');
+    assert.ok('ddATH' in m, 'campo ddATH atteso (Task D)');
+    assert.ok('peakATH' in m, 'campo peakATH atteso (Task D)');
   });
 });

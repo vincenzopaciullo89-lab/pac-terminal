@@ -116,21 +116,30 @@ export const config = {
   // -------------------------------------------------------------------------
   // STRATEGY ENGINE — Drawdown-Responsive Contribution
   // -------------------------------------------------------------------------
-  // Ridistribuzione tier per rispettare cap stretto €1.000/mese (PAC base €500).
-  // Tier 4 era 2.5x = €1.250, violava il vincolo operativo.
-  // Numeri di lavoro: la calibrazione finale uscirà dal backtest (Task Group D).
+  // Sistema tattico — regola minima 2-soglie (Task D, vedi docs/TASK_D_BACKTEST.md).
+  // Il backtest 2009-2026 su SWDA (proxy MSCI World EUR) ha mostrato che il
+  // sistema a 5 tier con composite era sovra-ingegnerizzato: il filtro B
+  // (dd252D declassamento) era dead code, e la 2-soglie cattura più timing
+  // alpha (+€1.153 vs +€603) con 1/3 dei parametri.
+  //
+  // Trigger: ddATH_real walk-forward (peak della history disponibile fino al
+  // mese corrente — vedi metricsEngine.computePriceMetrics).
+  //
+  // Allocazione del boost: 100% VWCE in entrambi i tier. Durante un drawdown
+  // di mercato ampio si compra esposizione world diversificata, non si
+  // aumenta il tilt Nasdaq (più volatile). Il 10% CSNDX resta solo sul
+  // PAC base €500.
+  //
+  // ONESTÀ: questo sistema è progettato per disciplinare il comportamento
+  // (versare di più nei drawdown aiuta a non vendere nel panico), NON per
+  // battere il mercato. Sul backtest 2009-2026 ha aggiunto ~€1.150 di timing
+  // alpha in 16 anni = 0,36% del totale fisso. Il valore reale del PAC è la
+  // costanza dei versamenti, non il timing dei boost.
   strategyTiers: [
-    { tier: 0, ddMin: -0.05, ddMax:  0.99, multiplier: 1.00, label: 'Normal',           description: 'Mercato vicino al trend' },
-    { tier: 1, ddMin: -0.10, ddMax: -0.05, multiplier: 1.10, label: 'Tier 1 Elevated',  description: 'Drawdown lieve' },
-    { tier: 2, ddMin: -0.15, ddMax: -0.10, multiplier: 1.30, label: 'Tier 2 Stressed',  description: 'Drawdown moderato' },
-    { tier: 3, ddMin: -0.25, ddMax: -0.15, multiplier: 1.60, label: 'Tier 3 Severe',    description: 'Drawdown severo' },
-    { tier: 4, ddMin: -1.00, ddMax: -0.25, multiplier: 2.00, label: 'Tier 4 Extreme',   description: 'Drawdown estremo' },
+    { tier: 0, ddATHMax:  0.99, totalAmount:  500, boostAmount:   0, allocationBoost: null,   label: 'Normal',          description: 'Mercato vicino al trend' },
+    { tier: 1, ddATHMax: -0.10, totalAmount:  750, boostAmount: 250, allocationBoost: 'VWCE', label: 'Boost +50%',      description: 'Drawdown ≥10% dal peak storico' },
+    { tier: 2, ddATHMax: -0.20, totalAmount: 1000, boostAmount: 500, allocationBoost: 'VWCE', label: 'Boost +100%',     description: 'Drawdown ≥20% dal peak storico' },
   ],
-
-  triggerComposite: {
-    weightDD12M: 0.6,
-    weightMA200: 0.4,
-  },
 
   tax: {
     capitalGainsRate: 0.26,

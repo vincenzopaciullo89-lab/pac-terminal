@@ -44,7 +44,9 @@ function pacAt(month, schedule) {
 }
 
 function simulateTacticalPAC(params, pacSchedule, seed) {
-  const { nSim, months, mu, sigma, ter, pv0, capPerYear, tiers } = params;
+  // baseAmount: serve a derivare il multiplier dal nuovo schema tier
+  // (totalAmount / baseAmount). Default 500 se non passato (back-compat).
+  const { nSim, months, mu, sigma, ter, pv0, capPerYear, tiers, baseAmount = 500 } = params;
   const muLog = Math.log(1 + mu) / 12 - 0.5 * Math.pow(sigma / Math.sqrt(12), 2);
   const sigmaM = sigma / Math.sqrt(12);
   const terM = ter / 12;
@@ -54,7 +56,6 @@ function simulateTacticalPAC(params, pacSchedule, seed) {
   const totalContributedArr = new Float64Array(nSim);
 
   const rng = mulberry32(seed);
-  const buffer = new Float64Array(12);
 
   for (let s = 0; s < nSim; s++) {
     let v = pv0;
@@ -64,8 +65,6 @@ function simulateTacticalPAC(params, pacSchedule, seed) {
     let boostThisYear = 0;
     let lastYearTracked = 0;
 
-    for (let i = 0; i < 12; i++) buffer[i] = pv0;
-
     for (let m = 0; m < months; m++) {
       const yearIdx = Math.floor(m / 12);
       if (yearIdx !== lastYearTracked) {
@@ -73,15 +72,18 @@ function simulateTacticalPAC(params, pacSchedule, seed) {
         lastYearTracked = yearIdx;
       }
 
-      let peak12m = -Infinity;
-      for (let i = 0; i < 12; i++) if (buffer[i] > peak12m) peak12m = buffer[i];
-      const dd12m = peak12m > 0 ? (v / peak12m) - 1 : 0;
+      // Trigger = ddATH del PV (peak walk-forward, già aggiornato sotto).
+      // Coerente con la regola tattica reale (strategyEngine: trigger su ddATH).
+      const ddATH_sim = peak > 0 ? (v / peak) - 1 : 0;
 
       let multiplier = 1.0;
       if (boostThisYear < capPerYear) {
-        for (const t of tiers) {
-          if (dd12m <= t.ddMax && dd12m > t.ddMin) {
-            multiplier = t.multiplier;
+        // Scorre i tier dal più severo (indice alto) al meno: prende il primo
+        // che il ddATH corrente soddisfa. Schema nuovo: `ddATHMax` + `totalAmount`.
+        for (let i = tiers.length - 1; i >= 1; i--) {
+          const t = tiers[i];
+          if (ddATH_sim <= t.ddATHMax) {
+            multiplier = t.totalAmount / baseAmount;
             break;
           }
         }
@@ -99,8 +101,6 @@ function simulateTacticalPAC(params, pacSchedule, seed) {
       if (v > peak) peak = v;
       const ddTrue = peak > 0 ? (v / peak) - 1 : 0;
       if (ddTrue < ddMin) ddMin = ddTrue;
-
-      buffer[m % 12] = v;
     }
     finalValues[s] = v;
     finalDDs[s] = ddMin;

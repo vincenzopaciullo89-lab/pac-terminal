@@ -9,8 +9,11 @@
 
 import { config } from './config.js';
 
-const MC_CACHE_KEY = 'pd_mc_results_v3';
-const MC_CACHE_TS_KEY = 'pd_mc_results_ts_v3';
+// Cache bumpata a v4: il sistema tier è cambiato (3-tier ddATH, schema con
+// totalAmount/ddATHMax invece di multiplier/ddMin/ddMax). I risultati MC v3
+// pre-Task D vanno invalidati automaticamente.
+const MC_CACHE_KEY = 'pd_mc_results_v4';
+const MC_CACHE_TS_KEY = 'pd_mc_results_ts_v4';
 const MC_CACHE_HOURS = 24;
 
 const safeStorage = {
@@ -23,7 +26,8 @@ function configHash(params) {
   const str = JSON.stringify({
     months: params.months, nSim: params.nSim,
     mu: params.mu, sigma: params.sigma, pv0: params.pv0,
-    tiers: params.tiers, pacSchedule: params.pacSchedule,
+    tiers: params.tiers, baseAmount: params.baseAmount,
+    pacSchedule: params.pacSchedule,
   });
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
@@ -99,6 +103,7 @@ export function runMonteCarlo(options = {}) {
     pv0: typeof currentValue === 'number' && !isNaN(currentValue) ? currentValue : 0,
     tiers: config.strategyTiers,
     capPerYear: config.pac.capBoostMonthsPerYear,
+    baseAmount: config.pac.baseMonthlyAmount,
     pacSchedule: schedule,
     monthlyPAC,
   };
