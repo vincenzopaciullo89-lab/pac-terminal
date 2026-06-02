@@ -394,7 +394,194 @@ function main() {
     console.log(`${label.padEnd(26)} | ${pct(us).padStart(8)} | ${pct(tech).padStart(9)} | ${nota}`);
   }
 
-  console.log('\nNB: nessuno scoring applicato. I numeri qualitativi e i giudizi sono nel report (CHECKPOINT 5.3).');
+  // ===========================================================================
+  // FASE 5.4 — SCORING NORMALIZZATO + SENSITIVITY
+  // ---------------------------------------------------------------------------
+  // Metodo di normalizzazione (DICHIARATO):
+  //   Per ogni dimensione, si converte il valore grezzo in punteggio 0-10 con
+  //   min-max sui SOLI 6 candidati della griglia:
+  //     - "higher is better"  → score = 10 * (raw - worst) / (best - worst)
+  //     - "lower is better"   → score = 10 * (best - raw) / (best - worst)
+  //   Per dimensioni-giudizio (Rendimento atteso forward, Behavioral) si dà
+  //   direttamente un punteggio 1-10 con razionale tracciato in console.
+  //   Per dimensioni composite (Robustezza, Diversificazione) si fa la media
+  //   delle sub-componenti normalizzate (pesi uguali, dichiarati sotto).
+  //
+  // RENDIMENTO ATTESO: NON usa il CAGR storico (premerebbe meccanicamente i
+  // più tech). Usa stime forward giudicate basate sul consensus istituzionale
+  // Q1 2025 — vedi docs/TASK_5_ASSET_ALLOCATION_5_3.md §4.
+  // ===========================================================================
+  console.log('\n' + '='.repeat(92));
+  console.log('FASE 5.4 — SCORING NORMALIZZATO 0-10 + SENSITIVITY');
+  console.log('='.repeat(92));
+
+  const labels = Object.keys(CANDIDATES);
+
+  // ---------- DIMENSIONE 1: COSTO (lower is better) ----------
+  // Sub-input: cost wedge 20y in €. Più basso = score più alto.
+  const costRaw = labels.map(l => costs[l].wedgeEur);
+
+  // ---------- DIMENSIONE 2: ROBUSTEZZA (composito) ----------
+  // Sub-componenti normalizzate, media equi-pesata:
+  //   - maxDD          (lower-abs is better; raw negativo → score = 10*(maxDD - worst)/(0 - worst))
+  //   - recoveryDays   (lower is better)
+  //   - worst10y       (higher is better)
+  //   - drawdown bear 2022 (lower-abs is better) — la "crisi sbagliata" per chi è tech-heavy
+  function bearDD(label) {
+    const s = results[label].serie;
+    const r = eventDrawdown(s, EVENTS['Bear 2022 (DM)'][0], EVENTS['Bear 2022 (DM)'][1]);
+    return r ? r.mdd : 0;
+  }
+  const maxDDRaw      = labels.map(l => results[l].s.mdd);          // negativo
+  const recoveryRaw   = labels.map(l => results[l].s.recoveryDays); // giorni
+  const worst10Raw    = labels.map(l => results[l].s.worst10);      // %
+  const bear2022Raw   = labels.map(l => bearDD(l));                 // negativo
+
+  // ---------- DIMENSIONE 3: DIVERSIFICAZIONE (composito) ----------
+  // Sub-componenti, media equi-pesata:
+  //   - (100% - USA agg.)  → più diversificato geograficamente
+  //   - (100% - Tech agg.) → meno concentrato di settore
+  //   - peso EM nel candidato (bonus per diversificazione strutturale vera)
+  function aggUS(weights, isLegacy) {
+    let u = 0; for (const [c, w] of Object.entries(weights)) {
+      const eff = isLegacy ? c : (operativeMap[c] || c);
+      u += w * COMPOSITION[eff].us;
+    } return u;
+  }
+  function aggTech(weights, isLegacy) {
+    let t = 0; for (const [c, w] of Object.entries(weights)) {
+      const eff = isLegacy ? c : (operativeMap[c] || c);
+      t += w * COMPOSITION[eff].tech;
+    } return t;
+  }
+  function emWeight(weights) { return weights.em || 0; }
+  const usRaw   = labels.map(l => aggUS(CANDIDATES[l], l.startsWith('C6')));
+  const techRaw = labels.map(l => aggTech(CANDIDATES[l], l.startsWith('C6')));
+  const emRaw   = labels.map(l => emWeight(CANDIDATES[l]));
+
+  // ---------- DIMENSIONE 4: RENDIMENTO ATTESO FORWARD (giudizio, NON CAGR) ----------
+  // Punteggi 1-10 derivati esplicitamente da §4 del CHECKPOINT 5.3.
+  // Razionale dichiarato per ognuno. Coerenti col consensus istituzionale Q1 2025.
+  const FWD_SCORES = {
+    'C1 VWCE 100%':            { score: 6.0, why: 'baseline equity globale, ~5-7% nominale EUR atteso; nessun premio strutturale' },
+    'C2 VWCE 90% / CSNDX 10%': { score: 6.0, why: 'identico a C1 forward: il tilt CSNDX è amplificazione di asset già premiati storicamente ma in fase di multiple compression' },
+    'C3 VWCE 70% / CSNDX 30%': { score: 5.0, why: 'penalità per headwind multipli USA-tech: CAPE Shiller >35 → nessuna fonte serie dà premio Nasdaq forward' },
+    'C4 VWCE 80% / EM 20%':    { score: 6.5, why: 'leggero premio per valutazione EM bassa (P/E ~13 vs S&P 21); tesi mean-reversion non garantita' },
+    'C5 VWCE70/CSNDX15/EM15':  { score: 6.0, why: 'ibrido medio: tilt EM compensato dal tilt tech (segni opposti)' },
+    'C6 legacy ex-VETA':       { score: 5.0, why: 'più concentrato USA (88%) → soggetto allo stesso headwind multipli; il vantaggio storico non è ripetibile' },
+  };
+
+  // ---------- DIMENSIONE 5: BEHAVIORAL FIT (giudizio) ----------
+  // Punteggi 1-10 da §5 del CHECKPOINT 5.3.
+  const BEHAV_SCORES = {
+    'C1 VWCE 100%':            { score: 9.0, why: '1 asset, narrativa "mercato mondiale" robusta, staying power alto' },
+    'C2 VWCE 90% / CSNDX 10%': { score: 8.5, why: 'quasi C1, narrativa identica; il 10% CSNDX è gestibile' },
+    'C3 VWCE 70% / CSNDX 30%': { score: 5.0, why: 'rischio abbandono ALTO in bear tech (stima -55÷-65% in scenario dot-com); ostacola anche il boost tattico Task D' },
+    'C4 VWCE 80% / EM 20%':    { score: 6.5, why: 'pressione narrativa costante ("perché EM se USA vince?"); ribilanciamento annuale necessario' },
+    'C5 VWCE70/CSNDX15/EM15':  { score: 5.5, why: '3 asset = 3 attriti; ogni componente ha la sua narrativa da difendere; più complesso del beneficio incrementale' },
+    'C6 legacy ex-VETA':       { score: 3.0, why: 'legacy congelato, NON gestibile/target operativo; alta concentrazione USA + 4 ETF da seguire' },
+  };
+
+  // ---------- Normalizzazione min-max su 0-10 ----------
+  function norm(raw, higherBetter) {
+    const min = Math.min(...raw), max = Math.max(...raw);
+    if (max === min) return raw.map(() => 5.0);
+    return raw.map(v => higherBetter ? (10 * (v - min) / (max - min)) : (10 * (max - v) / (max - min)));
+  }
+  const costScore     = norm(costRaw, /*higherBetter*/ false);         // - cost wedge
+  const maxDDScore    = norm(maxDDRaw, true);  // raw negativo → "più alto" = meno male (es. -0.319 > -0.336)
+  const recovScore    = norm(recoveryRaw, false);
+  const worst10Score  = norm(worst10Raw, true);
+  const bear22Score   = norm(bear2022Raw, true);
+  const robustScore   = labels.map((_, i) => (maxDDScore[i] + recovScore[i] + worst10Score[i] + bear22Score[i]) / 4);
+
+  const usScore       = norm(usRaw, false);   // più USA = meno diversif.
+  const techScore     = norm(techRaw, false);
+  const emBonusScore  = norm(emRaw, true);    // più EM = bonus diversif. strutturale
+  const diversScore   = labels.map((_, i) => (usScore[i] + techScore[i] + emBonusScore[i]) / 3);
+
+  const fwdScore   = labels.map(l => FWD_SCORES[l].score);
+  const behavScore = labels.map(l => BEHAV_SCORES[l].score);
+
+  // ---------- WEIGHTED TOTAL — scenari ----------
+  const SCENARIOS = {
+    'LOCKED   (cost 20 / robust 25 / divers 20 / fwd 20 / behav 15)':
+      { cost: 0.20, robust: 0.25, divers: 0.20, fwd: 0.20, behav: 0.15 },
+    'A pro-rendimento  (cost 15 / robust 15 / divers 15 / fwd 40 / behav 15)':
+      { cost: 0.15, robust: 0.15, divers: 0.15, fwd: 0.40, behav: 0.15 },
+    'B pro-robustezza  (cost 10 / robust 35 / divers 20 / fwd 10 / behav 25)':
+      { cost: 0.10, robust: 0.35, divers: 0.20, fwd: 0.10, behav: 0.25 },
+    'C equipeso        (cost 20 / robust 20 / divers 20 / fwd 20 / behav 20)':
+      { cost: 0.20, robust: 0.20, divers: 0.20, fwd: 0.20, behav: 0.20 },
+  };
+
+  function weighted(s) {
+    return labels.map((_, i) =>
+      s.cost * costScore[i] + s.robust * robustScore[i] + s.divers * diversScore[i] +
+      s.fwd * fwdScore[i] + s.behav * behavScore[i]
+    );
+  }
+
+  // ---------- DIAGNOSTICA: punteggi per dimensione (scenario LOCKED) ----------
+  console.log('\nDIMENSIONI (0-10) — input dello scoring:');
+  console.log('candidato                  | costo | robust | divers | fwd  | behav');
+  for (let i = 0; i < labels.length; i++) {
+    console.log(`${labels[i].padEnd(26)} | ${costScore[i].toFixed(2).padStart(5)} | ${robustScore[i].toFixed(2).padStart(6)} | ${diversScore[i].toFixed(2).padStart(6)} | ${fwdScore[i].toFixed(2).padStart(4)} | ${behavScore[i].toFixed(2).padStart(5)}`);
+  }
+  console.log('\nROBUSTEZZA — sub-componenti (media equi-pesata):');
+  console.log('candidato                  | maxDD | recov | wor10y | bear22');
+  for (let i = 0; i < labels.length; i++) {
+    console.log(`${labels[i].padEnd(26)} | ${maxDDScore[i].toFixed(2).padStart(5)} | ${recovScore[i].toFixed(2).padStart(5)} | ${worst10Score[i].toFixed(2).padStart(6)} | ${bear22Score[i].toFixed(2).padStart(6)}`);
+  }
+  console.log('\nDIVERSIFICAZIONE — sub-componenti (media equi-pesata):');
+  console.log('candidato                  | inv-USA | inv-TECH | EM-bonus');
+  for (let i = 0; i < labels.length; i++) {
+    console.log(`${labels[i].padEnd(26)} | ${usScore[i].toFixed(2).padStart(7)} | ${techScore[i].toFixed(2).padStart(8)} | ${emBonusScore[i].toFixed(2).padStart(8)}`);
+  }
+  console.log('\nRENDIMENTO ATTESO FORWARD — punteggi giudicati + razionale:');
+  for (const l of labels) console.log(`  ${l.padEnd(26)} ${FWD_SCORES[l].score.toFixed(1)} — ${FWD_SCORES[l].why}`);
+  console.log('\nBEHAVIORAL FIT — punteggi giudicati + razionale:');
+  for (const l of labels) console.log(`  ${l.padEnd(26)} ${BEHAV_SCORES[l].score.toFixed(1)} — ${BEHAV_SCORES[l].why}`);
+
+  // ---------- TABELLA RANKING per scenario ----------
+  const rankings = {};
+  for (const [scName, w] of Object.entries(SCENARIOS)) {
+    const scores = weighted(w);
+    const order = labels.map((_, i) => i).sort((a, b) => scores[b] - scores[a]);
+    rankings[scName] = { scores, order };
+  }
+
+  for (const [scName, { scores, order }] of Object.entries(rankings)) {
+    console.log('\n' + '-'.repeat(92));
+    console.log(`SCENARIO: ${scName}`);
+    console.log('-'.repeat(92));
+    console.log('rank | candidato                  | score | (cost  robust divers fwd   behav)');
+    for (let r = 0; r < order.length; r++) {
+      const i = order[r];
+      const w = SCENARIOS[scName];
+      const breakdown = `(${(w.cost * costScore[i]).toFixed(2)}  ${(w.robust * robustScore[i]).toFixed(2)}   ${(w.divers * diversScore[i]).toFixed(2)}   ${(w.fwd * fwdScore[i]).toFixed(2)}  ${(w.behav * behavScore[i]).toFixed(2)})`;
+      console.log(`${String(r + 1).padStart(2)}   | ${labels[i].padEnd(26)} | ${scores[i].toFixed(2).padStart(5)} | ${breakdown}`);
+    }
+    const margin = scores[order[0]] - scores[order[1]];
+    const marginPct = margin / scores[order[1]];
+    console.log(`Margine 1°-2°: ${margin.toFixed(2)} (${(marginPct * 100).toFixed(1)}%) → ${Math.abs(margin) < 0.5 ? 'EQUIVALENTI (margine <0,5)' : 'distinti'}`);
+  }
+
+  // ---------- STABILITÀ del vincitore tra scenari ----------
+  console.log('\n' + '-'.repeat(92));
+  console.log('STABILITÀ VINCITORE TRA SCENARI');
+  console.log('-'.repeat(92));
+  const winners = Object.entries(rankings).map(([sc, { order }]) => [sc, labels[order[0]]]);
+  for (const [sc, w] of winners) console.log(`  ${sc.padEnd(70)} → ${w}`);
+  const winnerSet = new Set(winners.map(w => w[1]));
+  console.log(`\nVincitori unici: ${[...winnerSet].length} (${[...winnerSet].join(', ')})`);
+  if (winnerSet.size === 1) {
+    console.log('CONCLUSIONE: vincitore stabile su tutti gli scenari → evidenza più solida.');
+  } else {
+    console.log('CONCLUSIONE: vincitore CAMBIA al variare dei pesi → nessuna evidenza forte. I candidati sono sostanzialmente equivalenti e la scelta dipende dalle preferenze, non dai dati. Status quo difendibile per inerzia.');
+  }
+
+  console.log('\nNB: nessuno scoring applicato a config.js. La decisione finale è dell\'utente.');
 }
 
 main();
