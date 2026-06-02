@@ -141,6 +141,45 @@ export const config = {
     { tier: 2, ddATHMax: -0.20, totalAmount: 1000, boostAmount: 500, allocationBoost: 'VWCE', label: 'Boost +100%',     description: 'Drawdown ≥20% dal peak storico' },
   ],
 
+  // -------------------------------------------------------------------------
+  // ALERT DRAWDOWN — consumer di config.strategyTiers (Task F)
+  // -------------------------------------------------------------------------
+  // Il workflow .github/workflows/drawdown-alert.yml gira scripts/drawdown_alert.js
+  // ogni mattina (06:30 UTC, prima dell'apertura europea → close del giorno
+  // prima consolidato). Lo script:
+  //   • Legge data/history.json (VWCE da CSNDX-style payload o dedicato).
+  //   • Riusa src/metricsEngine.computePriceMetrics (B.5): stesso numero del
+  //     sito per costruzione, niente duplicazione di calcoli.
+  //   • Determina il tier da ddATH SOLO usando config.strategyTiers — niente
+  //     soglie hardcoded nello script.
+  //   • Manda email via Resend solo su CROSSING di tier (G2), con isteresi
+  //     (G3) per evitare flicker, e con stato persistente in data/alert_state.json.
+  //   • De-escalation: email informativa neutra quando si torna a un tier
+  //     più basso (niente linguaggio market-timing).
+  //
+  // Soglie operative: NON sono qui — vivono in `strategyTiers` (T1 ddATHMax
+  // -10%, T2 -20%). Questo blocco contiene solo i PARAMETRI DELL'ALERT, non
+  // del sistema tattico.
+  alerts: {
+    // Banda di isteresi (sui ddATH negativi): per uscire da un tier serve
+    // un recupero di `hysteresisBand` rispetto alla soglia di ingresso.
+    // Esempio: T1 entra a ddATH ≤ -10%; esce solo quando ddATH > -8%.
+    // T2 entra a -20%; esce quando ddATH > -18%. Evita flicker su rumore.
+    hysteresisBand: 0.02,
+    // Modalità test: se true, lo script stampa il payload Resend invece di
+    // inviare. Override via env ALERT_DRY_RUN=1.
+    dryRun: false,
+    // Hard cap difensivo: max email/giorno per singolo run, anche se per bug
+    // si producessero più transizioni. Il run normale ne manda 0 o 1.
+    maxEmailsPerRun: 3,
+    // Failsafe: se l'ultimo close di history.json è più vecchio di questo,
+    // si manda un'email "stale data" invece di processare metriche stantie.
+    staleHistoryHours: 36,
+    // Ticker su cui valutare l'alert. La storia in data/history.json è in
+    // EUR e accumulating: il ddATH calcolato coincide col trigger sito/Task D.
+    triggerTicker: 'VWCE',
+  },
+
   tax: {
     capitalGainsRate: 0.26,
     stampDutyAnnual: 0.002,
