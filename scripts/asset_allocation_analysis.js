@@ -304,7 +304,97 @@ function main() {
     console.log(`${label.padEnd(26)} | ddATH ${pct(m.ddATH)} | dd252D ${pct(m.dd252D)} | volRolling ${pct(m.volRolling)} | regime ${m.regime}`);
   }
 
-  console.log('\nNB: nessuno scoring applicato. Pesi e ranking arrivano dopo (CHECKPOINT 5.3/5.4).');
+  // ===========================================================================
+  // FASE 5.3 — DIMENSIONI QUALITATIVE / SEMI-QUANTITATIVE
+  // ---------------------------------------------------------------------------
+  // Etichetta delle fonti:
+  //   [FATTO]      = numero ufficiale (TER iShares/Vanguard, bollo italiano).
+  //   [STIMA]      = derivato da factsheet pubblici, valido al ~Q1 2025 (i
+  //                  pesi degli indici cambiano nel tempo, niente decimali).
+  //   [ASSUNZIONE] = scelta esplicita per il calcolo (capitale, finestra).
+  //   [GIUDIZIO]   = valutazione qualitativa.
+  // ===========================================================================
+  console.log('\n' + '='.repeat(92));
+  console.log('FASE 5.3 — DIMENSIONI QUALITATIVE / SEMI-QUANTITATIVE');
+  console.log('='.repeat(92));
+
+  // --- 1. COSTO: TER ponderato + bollo + cost wedge 20y ---
+  // [FATTO] TER ufficiali (iShares/Vanguard factsheet, KIID).
+  const TER = { swda: 0.0020, em: 0.0018, cspx: 0.0007, csndx: 0.0030, vwce: 0.0019 };
+  const STAMP_DUTY = 0.0020;      // [FATTO] bollo italiano 0,2%/anno
+  const HORIZON_Y = 20;           // [ASSUNZIONE] orizzonte coerente con investor.horizonYears
+  const CAPITAL = 100000;         // [ASSUNZIONE] capitale di esempio €100K per leggere il drag
+
+  // Il candidato C1 usa swda come proxy ma OPERATIVAMENTE il PAC è su VWCE
+  // (0.19%). Mostro entrambi: TER del proxy (per coerenza con la finestra storica)
+  // e TER operativo "in produzione" (VWCE invece di SWDA dove applicabile).
+  const operativeMap = { swda: 'vwce' };  // C1-C5 operativamente usano VWCE
+  console.log('\n' + '-'.repeat(92));
+  console.log('1. COSTO — TER ponderato + bollo 0,2%/y + cost wedge 20y (capitale esempio €100K)');
+  console.log('-'.repeat(92));
+  console.log('[FATTO] TER: VWCE 0,19% · CSNDX 0,30% · EM(IEMA) 0,18% · CSPX 0,07% · SWDA 0,20%');
+  console.log('[FATTO] Bollo titoli IT: 0,20%/anno sul controvalore. [ASSUNZIONE] 20 anni, €100K iniziali, no ribilanciamento per il drag.');
+  console.log('candidato                  | TER pond (oper.) | drag tot/anno | wedge 20y su €100K');
+  const costs = {};
+  for (const [label, w] of Object.entries(CANDIDATES)) {
+    // TER operativo: per C1-C5 sostituisco swda→vwce; per C6 (legacy reale) tengo swda.
+    const isLegacy = label.startsWith('C6');
+    let terW = 0;
+    for (const [c, wt] of Object.entries(w)) {
+      const eff = isLegacy ? c : (operativeMap[c] || c);
+      terW += wt * TER[eff];
+    }
+    const dragAnnual = terW + STAMP_DUTY;
+    // Wedge cumulato: 1 - (1-drag)^N, applicato al capitale.
+    const wedgeFrac = 1 - Math.pow(1 - dragAnnual, HORIZON_Y);
+    const wedgeEur = CAPITAL * wedgeFrac;
+    costs[label] = { terW, dragAnnual, wedgeEur };
+    console.log(`${label.padEnd(26)} | ${pct(terW, 3).padStart(12)} ${(isLegacy ? '(legacy)' : '(VWCE op.)').padStart(4)} | ${pct(dragAnnual, 3).padStart(11)} | ${('€' + Math.round(wedgeEur).toLocaleString('it-IT')).padStart(18)}`);
+  }
+  const cheapest = Object.entries(costs).reduce((a, b) => a[1].wedgeEur < b[1].wedgeEur ? a : b);
+  console.log(`\nPiù economico: ${cheapest[0]} (wedge €${Math.round(cheapest[1].wedgeEur).toLocaleString('it-IT')}/20y)`);
+  console.log('Delta vs più economico:');
+  for (const [label, c] of Object.entries(costs)) {
+    const d = c.wedgeEur - cheapest[1].wedgeEur;
+    if (Math.abs(d) > 1) console.log(`  ${label.padEnd(26)} +€${Math.round(d).toLocaleString('it-IT')}`);
+  }
+
+  // --- 3. CONCENTRAZIONE AGGREGATA USA / TECH (look-through) ---
+  // [STIMA] pesi USA/tech degli indici sottostanti — factsheet pubblici, ~Q1 2025.
+  // Numeri arrotondati: variano nel tempo, non vanno trattati come precisi.
+  const COMPOSITION = {
+    //              USA    TECH   (top-10 = concentrazione interna del fondo, info collaterale)
+    swda:  { us: 0.72, tech: 0.26, top10: 0.24 },  // [STIMA] MSCI World DM
+    vwce:  { us: 0.65, tech: 0.24, top10: 0.22 },  // [STIMA] FTSE All-World (incl. ~10% EM)
+    csndx: { us: 1.00, tech: 0.59, top10: 0.50 },  // [STIMA] Nasdaq 100
+    cspx:  { us: 1.00, tech: 0.32, top10: 0.34 },  // [STIMA] S&P 500
+    em:    { us: 0.00, tech: 0.22, top10: 0.20 },  // [STIMA] MSCI EM IMI (tech ≈ Taiwan/Korea semis)
+  };
+  console.log('\n' + '-'.repeat(92));
+  console.log('3. CONCENTRAZIONE USA/TECH aggregata (look-through degli indici)');
+  console.log('-'.repeat(92));
+  console.log('[STIMA] composizioni da factsheet pubblici (~Q1 2025). I numeri spostano nel tempo.');
+  console.log('candidato                  | USA agg. | TECH agg. | nota');
+  for (const [label, w] of Object.entries(CANDIDATES)) {
+    const isLegacy = label.startsWith('C6');
+    let us = 0, tech = 0;
+    for (const [c, wt] of Object.entries(w)) {
+      const eff = isLegacy ? c : (operativeMap[c] || c);
+      const k = COMPOSITION[eff];
+      us += wt * k.us;
+      tech += wt * k.tech;
+    }
+    let nota = '';
+    if (label.startsWith('C1')) nota = 'baseline (operativo: VWCE → 65% USA / 24% tech)';
+    if (label.startsWith('C2')) nota = '+3,5% USA, +3,5% tech vs C1 (CSNDX al 100% USA, ~96% già in VWCE)';
+    if (label.startsWith('C3')) nota = '+10,5% USA, +10,5% tech vs C1 → tilt USA-tech significativo';
+    if (label.startsWith('C4')) nota = '−13% USA (EM offre diversificazione vera)';
+    if (label.startsWith('C5')) nota = 'compromesso: −5% USA, +5,3% tech vs C1';
+    if (label.startsWith('C6')) nota = 'legacy: USA-heavy (SWDA+CSPX entrambi DM/USA)';
+    console.log(`${label.padEnd(26)} | ${pct(us).padStart(8)} | ${pct(tech).padStart(9)} | ${nota}`);
+  }
+
+  console.log('\nNB: nessuno scoring applicato. I numeri qualitativi e i giudizi sono nel report (CHECKPOINT 5.3).');
 }
 
 main();
