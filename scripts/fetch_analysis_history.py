@@ -41,24 +41,51 @@ PERIOD = "max"
 
 # -----------------------------------------------------------------------------
 # Configurazione ticker per analisi.
-#   name:       nome file output (data/analysis/<name>.json) + chiave logica
-#   yf:         ticker yfinance
-#   currency:   valuta nativa attesa della quotazione
-#   fx_pair:    None se già in EUR; altrimenti coppia "EURXXX=X" (es. EURGBP=X)
-#               per convertire in EUR. La conversione allinea per data e NON
-#               fa forward-fill: le date senza tasso FX vengono scartate
-#               (niente invenzione di prezzi).
+#   name:          nome file output (data/analysis/<name>.json) + chiave logica
+#   yf:            ticker yfinance (singolo)
+#   yf_candidates: lista alternativa a `yf` — si provano in ordine e si tiene
+#                  quello con la STORIA PIÙ LUNGA (utile quando non si sa quale
+#                  listing yfinance copre meglio un ETF: non sondabile offline).
+#   currency:      valuta nativa attesa della quotazione
+#   fx_pair:       None se già in EUR; altrimenti coppia "EURXXX=X" (es. EURGBP=X)
+#                  per convertire in EUR. La conversione allinea per data e NON
+#                  fa forward-fill: le date senza tasso FX vengono scartate
+#                  (niente invenzione di prezzi).
 #
-# SWDA.MI = iShares Core MSCI World (Borsa Italiana, EUR): proxy storia lunga
-# di VWCE per la calibrazione del Task D (VWCE.MI parte solo dal 2020).
+# SWDA.MI = iShares Core MSCI World (EUR): proxy storia lunga di VWCE (Task D/5).
+# em      = iShares Core MSCI EM IMI: provo più listing (.MI/.AS, IEMA/EIMI)
+#           e tengo il più lungo. Listing EUR → no FX.
+# cspx    = iShares Core S&P 500 (CSPX.AS, Amsterdam EUR) — serve a C6 (legacy).
+# veta    = Vanguard FTSE Dev Europe? No: VETA.L è GBP → FX EURGBP. Serve a C6.
 # -----------------------------------------------------------------------------
 ANALYSIS_TICKERS = [
     {"name": "swda", "yf": "SWDA.MI", "currency": "EUR", "fx_pair": None},
-    # Candidati futuri (TASK 5) — abilitare quando servono:
-    # {"name": "em_iema",  "yf": "IEMA.MI", "currency": "EUR", "fx_pair": None},
+    {"name": "em",   "yf_candidates": ["IEMA.MI", "EIMI.MI", "EIMI.AS", "IEMA.AS"],
+     "currency": "EUR", "fx_pair": None},
+    {"name": "cspx", "yf": "CSPX.AS", "currency": "EUR", "fx_pair": None},
+    {"name": "veta", "yf": "VETA.L",  "currency": "GBP", "fx_pair": "EURGBP=X"},
+    # Candidati futuri (TASK 5 estensioni) — abilitare quando servono:
     # {"name": "smallcap", "yf": "IUSN.MI", "currency": "EUR", "fx_pair": None},
     # {"name": "eu_bond",  "yf": "IBGL.MI", "currency": "EUR", "fx_pair": None},
 ]
+
+
+def fetch_best_candidate(candidates, period=PERIOD):
+    """Prova ogni ticker della lista, tiene quello con più close (storia più
+    lunga). Ritorna (serie, yf_ticker_scelto). Solleva se nessuno funziona."""
+    best, best_tk, errors = None, None, []
+    for tk in candidates:
+        try:
+            data = fetch_history(tk, period)
+            if best is None or len(data) > len(best):
+                best, best_tk = data, tk
+        except Exception as e:
+            errors.append(f"{tk}: {type(e).__name__}: {e}")
+    if best is None:
+        raise RuntimeError(f"nessun candidato valido ({'; '.join(errors)})")
+    print(f"[em] scelto {best_tk} ({len(best)} close); scartati: "
+          f"{[c for c in candidates if c != best_tk]}", file=sys.stderr)
+    return best, best_tk
 
 
 def fetch_history(yf_ticker, period=PERIOD):
@@ -118,9 +145,13 @@ def main():
     summary, failures = [], 0
 
     for cfg in ANALYSIS_TICKERS:
-        name, yf_t = cfg["name"], cfg["yf"]
+        name = cfg["name"]
+        yf_t = cfg.get("yf") or "/".join(cfg.get("yf_candidates", []))
         try:
-            native = fetch_history(yf_t)
+            if cfg.get("yf_candidates"):
+                native, yf_t = fetch_best_candidate(cfg["yf_candidates"])
+            else:
+                native = fetch_history(cfg["yf"])
             data, fx_missing = to_eur(native, cfg["currency"], cfg.get("fx_pair"))
             if not data:
                 raise RuntimeError("empty_after_fx")
