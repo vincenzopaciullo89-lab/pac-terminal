@@ -1,7 +1,7 @@
 {
-  "updated_at": "2026-06-07T10:12:15.729352+00:00",
+  "updated_at": "2026-06-07T19:53:38.423299+00:00",
   "fx_rates": {
-    "EURGBP": 0.8634799718856812
+    "EURGBP": 0.8636000156402588
   },
   "current": {
     "VWCE": {
@@ -34,7 +34,7 @@
     },
     "VETA": {
       "price_native": 20.6745,
-      "price_eur": 23.9432,
+      "price_eur": 23.9399,
       "currency": "GBP",
       "needs_fx": true,
       "source": "yfinance"
