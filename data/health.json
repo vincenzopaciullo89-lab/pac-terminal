@@ -2,34 +2,34 @@
   "tickers": {
     "VWCE": {
       "consecutive_failures": 0,
-      "last_success": "2026-06-08T20:39:08.204220+00:00",
+      "last_success": "2026-06-09T10:44:59.180176+00:00",
       "last_source": "yfinance",
       "alert_needed": false
     },
     "CSNDX": {
       "consecutive_failures": 0,
-      "last_success": "2026-06-08T20:39:08.593072+00:00",
+      "last_success": "2026-06-09T10:44:59.372694+00:00",
       "last_source": "yfinance",
       "alert_needed": false
     },
     "CSPX": {
       "consecutive_failures": 0,
-      "last_success": "2026-06-08T20:39:08.922307+00:00",
+      "last_success": "2026-06-09T10:44:59.578869+00:00",
       "last_source": "yfinance",
       "alert_needed": false
     },
     "SWDA": {
       "consecutive_failures": 0,
-      "last_success": "2026-06-08T20:39:09.191509+00:00",
+      "last_success": "2026-06-09T10:44:59.885201+00:00",
       "last_source": "yfinance",
       "alert_needed": false
     },
     "VETA": {
       "consecutive_failures": 0,
-      "last_success": "2026-06-08T20:39:09.535250+00:00",
+      "last_success": "2026-06-09T10:45:00.247706+00:00",
       "last_source": "yfinance",
       "alert_needed": false
     }
   },
-  "updated_at": "2026-06-08T20:39:07.435481+00:00"
+  "updated_at": "2026-06-09T10:44:58.431481+00:00"
 }
