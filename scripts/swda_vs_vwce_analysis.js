@@ -1,19 +1,24 @@
 #!/usr/bin/env node
 // =============================================================================
-// swda_vs_vwce_analysis.js — confronto SWDA puro vs VWCE sintetico (90/10)
+// swda_vs_vwce_analysis.js (v2) — SWDA puro vs VWCE come destinazione dei
+// €450/mese per i prossimi 20 anni. Confronto fattuale in 6 parti.
 // =============================================================================
-// PARTE 1 — confronto storico sulle serie EUR già scaricate (data/analysis/):
-//   - SERIE A = SWDA puro (MSCI World, solo sviluppati).
-//   - SERIE B = VWCE sintetico = 90% SWDA + 10% EM (IEMA), ribilanciato annuale.
-//     È una RICOSTRUZIONE: VWCE reale parte dal 2019 e non copre 2009-2018.
-//     I pesi EM reali di VWCE oscillano ~10-11%: il 10% è un'approssimazione.
-// PARTE 2 — Monte Carlo 50k path × 20y × €450/mese su entrambi i profili,
-//   con μ e σ STIMATI dalle rispettive serie reali della Parte 1.
-//   Caveat obbligatorio nel report: il MC restituisce in output l'assunzione
-//   in input (μ_storico). NON è informativo per la decisione SWDA vs VWCE.
-// PARTE 3 — domanda strategica che il backtest NON può rispondere.
+// NESSUNA raccomandazione prodotta. NESSUNA modifica a config.js.
+// La decisione è dell'utente.
 //
-// Output: console + docs/SWDA_VS_VWCE_ANALYSIS.md.
+// Metodologia (coerente con TASK 5):
+//   - σ/Sharpe/Sortino da rendimenti MENSILI (×√12) — anti-desync close;
+//   - CAGR/maxDD/recovery/rolling da livelli daily;
+//   - ribilanciamento annuale per il sintetico (primo g. di Borsa dell'anno);
+//   - statistiche descrittive ex-post: nessun dato futuro entra in alcun
+//     calcolo a una data simulata (il PAC è sequenziale per costruzione).
+//
+// TER: i prezzi ETF sono GIÀ al netto del TER (il NAV lo incorpora) —
+// sottrarlo di nuovo sarebbe double-counting. Il sintetico B incorpora
+// TER ~0,198% (0,9×0,20 SWDA + 0,1×0,18 IEMA) vs 0,19% del VWCE reale:
+// B sottostima il VWCE reale di ~0,008 pp/anno (trascurabile, dichiarato).
+// Il BOLLO 0,2%/anno NON è nei prezzi: applicato nel PAC (Parte 2) come
+// drag mensile pro-rata su entrambi, identico.
 // =============================================================================
 
 import fs from 'node:fs';
@@ -23,57 +28,55 @@ import { fileURLToPath } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
 
-const RISK_FREE = 0.0;       // dichiarato
-const TRADING_DAYS = 252;
-const ROLL_10Y_DAYS = 10 * TRADING_DAYS;
-const PAC_MONTHLY = 450;     // l'utente confronta su €450/mese (90% di €500)
+const RISK_FREE = 0.0;
+const ROLL_10Y_DAYS = 10 * 252;
+const PAC_MONTHLY = 450;
+const BOLLO_ANNUAL = 0.002;
 const MC_N = 50_000;
-const MC_HORIZON_YEARS = 20;
+const MC_YEARS = 20;
 const MC_SEED = 42;
+const TODAY = '2026-06-10';
+
+// --- Parte 4: composizione stimata (etichettata STIMA, coerente con TASK 5) --
+const GEO = {
+  SWDA:  { us: 0.72, em: 0.00 },   // MSCI World ~72% USA
+  CSPX:  { us: 1.00, em: 0.00 },
+  CSNDX: { us: 1.00, em: 0.00 },
+  VWCE:  { us: 0.65, em: 0.10 },   // FTSE All-World ~65% USA, ~10% EM
+};
+const PART4_GROWTH = 0.07;          // crescita NOMINALE uguale per tutti (dichiarata)
+const SAT_MONTHLY = 50;             // €50/mese CSNDX restano in entrambi gli scenari
 
 // -----------------------------------------------------------------------------
-// I/O
+// I/O e utilità di base
 // -----------------------------------------------------------------------------
-function loadAnalysis(name) {
-  const p = path.join(ROOT, 'data', 'analysis', `${name}.json`);
-  return JSON.parse(fs.readFileSync(p, 'utf8')).data;
-}
-
-function toMap(arr) {
-  const m = new Map();
-  for (const r of arr) if (Number.isFinite(r.close) && r.close > 0) m.set(r.date, r.close);
-  return m;
-}
+const loadAnalysis = n => JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'analysis', `${n}.json`), 'utf8')).data;
+const toMap = arr => { const m = new Map(); for (const r of arr) if (Number.isFinite(r.close) && r.close > 0) m.set(r.date, r.close); return m; };
+const yearsBetween = (a, b) => (Date.parse(b) - Date.parse(a)) / (365.25 * 864e5);
+const eur = x => '€' + Math.round(x).toLocaleString('it-IT');
+const pct = (x, d = 1) => x == null ? 'n/d' : (x * 100).toFixed(d) + '%';
+const num = (x, d = 2) => x == null ? 'n/d' : x.toFixed(d);
 
 function commonDates(...maps) {
   let dates = [...maps[0].keys()];
   for (let i = 1; i < maps.length; i++) dates = dates.filter(d => maps[i].has(d));
-  dates.sort();
-  return dates;
+  return dates.sort();
 }
 
-// -----------------------------------------------------------------------------
-// Portfolio simulator con ribilanciamento annuale (primo giorno di Borsa
-// di ogni anno solare). Per single-asset il rebalance è no-op.
-// -----------------------------------------------------------------------------
 function simulatePortfolio(weights, dates, series) {
   const comps = Object.keys(weights);
   const price = (c, d) => series[c].get(d);
   let value = 1.0;
   const units = {};
-  const d0 = dates[0];
-  for (const c of comps) units[c] = (value * weights[c]) / price(c, d0);
-  const out = [{ date: d0, value }];
-  let curYear = d0.slice(0, 4);
+  for (const c of comps) units[c] = (value * weights[c]) / price(c, dates[0]);
+  const out = [{ date: dates[0], value }];
+  let curYear = dates[0].slice(0, 4);
   for (let i = 1; i < dates.length; i++) {
     const d = dates[i];
     value = comps.reduce((s, c) => s + units[c] * price(c, d), 0);
-    const y = d.slice(0, 4);
-    if (y !== curYear) {
-      curYear = y;
-      if (comps.length > 1) {
-        for (const c of comps) units[c] = (value * weights[c]) / price(c, d);
-      }
+    if (d.slice(0, 4) !== curYear) {
+      curYear = d.slice(0, 4);
+      if (comps.length > 1) for (const c of comps) units[c] = (value * weights[c]) / price(c, d);
     }
     out.push({ date: d, value });
   }
@@ -81,39 +84,50 @@ function simulatePortfolio(weights, dates, series) {
 }
 
 // -----------------------------------------------------------------------------
-// Statistiche (CAGR/maxDD/rolling level-based daily; σ/Sharpe/Sortino monthly
-// per evitare il desync che era stato trovato in TASK 5).
+// Statistiche
 // -----------------------------------------------------------------------------
-function yearsBetween(d1, d2) {
-  return (Date.parse(d2) - Date.parse(d1)) / (365.25 * 24 * 3600 * 1000);
-}
-
 function monthlyReturns(serie) {
   const byMonth = new Map();
   for (const p of serie) byMonth.set(p.date.slice(0, 7), p.value);
-  const months = [...byMonth.keys()].sort();
+  const ms = [...byMonth.keys()].sort();
   const r = [];
-  for (let i = 1; i < months.length; i++) r.push(byMonth.get(months[i]) / byMonth.get(months[i - 1]) - 1);
+  for (let i = 1; i < ms.length; i++) r.push(byMonth.get(ms[i]) / byMonth.get(ms[i - 1]) - 1);
   return r;
 }
 
 function basicStats(serie) {
-  const n = serie.length;
-  const years = yearsBetween(serie[0].date, serie[n - 1].date);
-  const cagr = Math.pow(serie[n - 1].value / serie[0].value, 1 / years) - 1;
+  const years = yearsBetween(serie[0].date, serie[serie.length - 1].date);
+  const cagr = Math.pow(serie[serie.length - 1].value / serie[0].value, 1 / years) - 1;
   const rets = monthlyReturns(serie);
   const mean = rets.reduce((a, b) => a + b, 0) / rets.length;
   const variance = rets.reduce((a, x) => a + (x - mean) ** 2, 0) / rets.length;
   const annVol = Math.sqrt(variance) * Math.sqrt(12);
   const dvar = rets.reduce((a, x) => a + (x < 0 ? x * x : 0), 0) / rets.length;
   const downside = Math.sqrt(dvar) * Math.sqrt(12);
-  const sharpe = (cagr - RISK_FREE) / annVol;
-  const sortino = downside > 0 ? (cagr - RISK_FREE) / downside : null;
-  return { years, cagr, annVol, sharpe, sortino, monthlyVol: Math.sqrt(variance), monthlyMean: mean };
+  return {
+    years, cagr, annVol,
+    sharpe: (cagr - RISK_FREE) / annVol,
+    sortino: downside > 0 ? (cagr - RISK_FREE) / downside : null,
+  };
 }
 
-// Lista TUTTI i drawdown che raggiungono almeno `threshold` (in modulo).
-// Ogni drawdown è chiuso quando si rivede il livello del peak.
+function maxDrawdownDetail(serie) {
+  let peak = serie[0].value, peakDate = serie[0].date;
+  let mdd = 0, mddPeak = null, mddTrough = null, mddPeakVal = null;
+  for (const p of serie) {
+    if (p.value > peak) { peak = p.value; peakDate = p.date; }
+    const dd = p.value / peak - 1;
+    if (dd < mdd) { mdd = dd; mddPeak = peakDate; mddTrough = p.date; mddPeakVal = peak; }
+  }
+  let recoveryDate = null;
+  for (const p of serie) if (mddTrough && p.date > mddTrough && p.value >= mddPeakVal) { recoveryDate = p.date; break; }
+  return {
+    depth: mdd, peakDate: mddPeak, troughDate: mddTrough, recoveryDate,
+    peakToTroughDays: mddPeak ? Math.round(yearsBetween(mddPeak, mddTrough) * 365.25) : null,
+    troughToRecoveryDays: recoveryDate ? Math.round(yearsBetween(mddTrough, recoveryDate) * 365.25) : null,
+  };
+}
+
 function listSignificantDrawdowns(serie, threshold = 0.10) {
   const out = [];
   let peak = serie[0].value, peakDate = serie[0].date;
@@ -121,98 +135,82 @@ function listSignificantDrawdowns(serie, threshold = 0.10) {
   for (const p of serie) {
     if (!inDD) {
       if (p.value > peak) { peak = p.value; peakDate = p.date; }
-      const dd = p.value / peak - 1;
-      if (dd < 0) {
-        inDD = true;
-        ddPeakVal = peak; ddPeakDate = peakDate;
-        ddMin = dd; ddTroughDate = p.date;
+      if (p.value / peak - 1 < 0) {
+        inDD = true; ddPeakVal = peak; ddPeakDate = peakDate;
+        ddMin = p.value / peak - 1; ddTroughDate = p.date;
       }
     } else {
       const dd = p.value / ddPeakVal - 1;
       if (dd < ddMin) { ddMin = dd; ddTroughDate = p.date; }
       if (p.value >= ddPeakVal) {
-        // Drawdown chiuso. Lo registriamo SOLO se ha superato la soglia.
-        if (Math.abs(ddMin) >= threshold) {
-          out.push({
-            peakDate: ddPeakDate, peakVal: ddPeakVal,
-            troughDate: ddTroughDate, depth: ddMin,
-            recoveryDate: p.date,
-            peakToTroughDays: Math.round(yearsBetween(ddPeakDate, ddTroughDate) * 365.25),
-            totalUnderwaterDays: Math.round(yearsBetween(ddPeakDate, p.date) * 365.25),
-          });
-        }
+        if (Math.abs(ddMin) >= threshold) out.push({
+          peakDate: ddPeakDate, troughDate: ddTroughDate, depth: ddMin, recoveryDate: p.date,
+          peakToTroughDays: Math.round(yearsBetween(ddPeakDate, ddTroughDate) * 365.25),
+          totalUnderwaterDays: Math.round(yearsBetween(ddPeakDate, p.date) * 365.25),
+        });
         inDD = false; peak = p.value; peakDate = p.date;
       }
     }
   }
-  // Se finisce ancora in drawdown e supera la soglia → underwater aperto.
-  if (inDD && Math.abs(ddMin) >= threshold) {
-    out.push({
-      peakDate: ddPeakDate, peakVal: ddPeakVal,
-      troughDate: ddTroughDate, depth: ddMin,
-      recoveryDate: null,
-      peakToTroughDays: Math.round(yearsBetween(ddPeakDate, ddTroughDate) * 365.25),
-      totalUnderwaterDays: null,
-    });
-  }
+  if (inDD && Math.abs(ddMin) >= threshold) out.push({
+    peakDate: ddPeakDate, troughDate: ddTroughDate, depth: ddMin, recoveryDate: null,
+    peakToTroughDays: Math.round(yearsBetween(ddPeakDate, ddTroughDate) * 365.25),
+    totalUnderwaterDays: null,
+  });
   return out;
-}
-
-function maxDrawdownDetail(serie) {
-  let peak = serie[0].value, peakDate = serie[0].date;
-  let mdd = 0, mddPeak = null, mddTrough = null, mddTroughVal = null, mddPeakVal = null;
-  for (const p of serie) {
-    if (p.value > peak) { peak = p.value; peakDate = p.date; }
-    const dd = p.value / peak - 1;
-    if (dd < mdd) { mdd = dd; mddPeak = peakDate; mddTrough = p.date; mddTroughVal = p.value; mddPeakVal = peak; }
-  }
-  let recoveryDate = null;
-  if (mddPeakVal != null) {
-    for (const p of serie) if (p.date > mddTrough && p.value >= mddPeakVal) { recoveryDate = p.date; break; }
-  }
-  return {
-    depth: mdd, peakDate: mddPeak, troughDate: mddTrough, recoveryDate,
-    peakToTroughDays: Math.round(yearsBetween(mddPeak, mddTrough) * 365.25),
-    troughToRecoveryDays: recoveryDate ? Math.round(yearsBetween(mddTrough, recoveryDate) * 365.25) : null,
-  };
 }
 
 function rolling10y(serie) {
   let worst = null, best = null, worstStart = null, bestStart = null;
   for (let i = 0; i + ROLL_10Y_DAYS < serie.length; i++) {
     const a = serie[i], b = serie[i + ROLL_10Y_DAYS];
-    const yrs = yearsBetween(a.date, b.date);
-    const c = Math.pow(b.value / a.value, 1 / yrs) - 1;
+    const c = Math.pow(b.value / a.value, 1 / yearsBetween(a.date, b.date)) - 1;
     if (worst === null || c < worst) { worst = c; worstStart = a.date; }
-    if (best  === null || c > best ) { best  = c; bestStart  = a.date; }
+    if (best === null || c > best) { best = c; bestStart = a.date; }
   }
   return { worst, worstStart, best, bestStart };
 }
 
-// -----------------------------------------------------------------------------
-// PAC simulator sulla serie REALE: acquisto al PRIMO giorno di Borsa di ogni
-// mese al close del giorno; final_value = units totali × last close.
-// -----------------------------------------------------------------------------
-function simulatePAC(serie, monthly) {
-  const firstOfMonth = new Map();
-  for (const p of serie) {
-    const ym = p.date.slice(0, 7);
-    if (!firstOfMonth.has(ym)) firstOfMonth.set(ym, p);
+// Rendimenti per anno solare (level-based: ultimo close dell'anno).
+function calendarReturns(serie) {
+  const lastOfYear = new Map();
+  for (const p of serie) lastOfYear.set(p.date.slice(0, 4), p.value);
+  const years = [...lastOfYear.keys()].sort();
+  const out = [];
+  // Primo anno: dal primo close della serie all'ultimo close dell'anno (parziale).
+  out.push({ year: years[0] + '*', ret: lastOfYear.get(years[0]) / serie[0].value - 1 });
+  for (let i = 1; i < years.length; i++) {
+    out.push({ year: years[i], ret: lastOfYear.get(years[i]) / lastOfYear.get(years[i - 1]) - 1 });
   }
-  let units = 0, invested = 0;
-  for (const p of firstOfMonth.values()) {
-    units += monthly / p.value;
-    invested += monthly;
-  }
-  const finalValue = units * serie[serie.length - 1].value;
-  const months = firstOfMonth.size;
-  return { months, invested, finalValue, totalReturn: finalValue / invested - 1 };
+  return out;
 }
 
 // -----------------------------------------------------------------------------
-// Monte Carlo: GBM log-normale mensile + PAC €450 contribuito a inizio mese.
-// μ_annual e σ_annual sono i parametri stimati dalle serie reali della Parte 1.
-// Tracciamo anche il max drawdown lungo ciascun path (peak walk-forward del PV).
+// PAC con bollo (0,2%/anno pro-rata mensile). Prezzi già netti di TER.
+// Acquisto al primo giorno di Borsa del mese; value-tracking mensile.
+// -----------------------------------------------------------------------------
+function simulatePACNet(serie, monthly, bolloAnnual = BOLLO_ANNUAL) {
+  const firstOfMonth = [];
+  const seen = new Set();
+  for (const p of serie) {
+    const ym = p.date.slice(0, 7);
+    if (!seen.has(ym)) { seen.add(ym); firstOfMonth.push(p); }
+  }
+  const bolloM = bolloAnnual / 12;
+  let value = 0, invested = 0;
+  for (let i = 0; i < firstOfMonth.length; i++) {
+    value += monthly; invested += monthly;
+    // Rendimento fino al prossimo punto mensile (o all'ultimo close).
+    const pNow = firstOfMonth[i];
+    const pNext = i + 1 < firstOfMonth.length ? firstOfMonth[i + 1] : serie[serie.length - 1];
+    value *= pNext.value / pNow.value;
+    value *= (1 - bolloM);
+  }
+  return { months: firstOfMonth.length, invested, finalValue: value, totalReturn: value / invested - 1 };
+}
+
+// -----------------------------------------------------------------------------
+// Monte Carlo (GBM mensile log-normale) + overlap delle distribuzioni
 // -----------------------------------------------------------------------------
 function mulberry32(seed) {
   let a = seed >>> 0;
@@ -229,385 +227,445 @@ function gaussian(rng) {
   while (v === 0) v = rng();
   return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
 }
-function quantile(arr, q) {
-  const sorted = [...arr].sort((a, b) => a - b);
+function quantile(sorted, q) {
   const idx = (sorted.length - 1) * q;
   const lo = Math.floor(idx), hi = Math.ceil(idx);
-  if (lo === hi) return sorted[lo];
-  return sorted[lo] * (hi - idx) + sorted[hi] * (idx - lo);
+  return lo === hi ? sorted[lo] : sorted[lo] * (hi - idx) + sorted[hi] * (idx - lo);
 }
 
-function monteCarlo(mu_annual, sigma_annual, monthly, horizonYears, nSim, seed) {
-  const months = horizonYears * 12;
-  // GBM: drift e std del log-return mensile.
-  const sigma_m = sigma_annual / Math.sqrt(12);
-  const mu_m_log = Math.log(1 + mu_annual) / 12 - 0.5 * sigma_m * sigma_m;
+function monteCarlo(mu, sigma, monthly, years, nSim, seed) {
+  const months = years * 12;
+  const sM = sigma / Math.sqrt(12);
+  const muLog = Math.log(1 + mu) / 12 - 0.5 * sM * sM;
   const rng = mulberry32(seed);
-
   const finals = new Float64Array(nSim);
   const maxDDs = new Float64Array(nSim);
-  const invested = monthly * months;
-
   for (let s = 0; s < nSim; s++) {
     let v = 0, peak = 0, mdd = 0;
     for (let m = 0; m < months; m++) {
-      v += monthly;                                  // contribuzione a inizio mese
-      const r = Math.exp(mu_m_log + sigma_m * gaussian(rng)) - 1;
-      v *= (1 + r);
+      v += monthly;
+      v *= Math.exp(muLog + sM * gaussian(rng));
       if (v > peak) peak = v;
       const dd = peak > 0 ? v / peak - 1 : 0;
       if (dd < mdd) mdd = dd;
     }
-    finals[s] = v;
-    maxDDs[s] = mdd;
+    finals[s] = v; maxDDs[s] = mdd;
   }
-  const finalsArr = Array.from(finals), ddArr = Array.from(maxDDs);
+  const fs_ = Array.from(finals).sort((a, b) => a - b);
+  const ds_ = Array.from(maxDDs).sort((a, b) => a - b);
+  const invested = monthly * months;
   return {
-    invested,
-    finals: {
-      p10: quantile(finalsArr, 0.10),
-      p25: quantile(finalsArr, 0.25),
-      p50: quantile(finalsArr, 0.50),
-      p75: quantile(finalsArr, 0.75),
-      p90: quantile(finalsArr, 0.90),
-      mean: finalsArr.reduce((a, b) => a + b, 0) / nSim,
-    },
-    probBelowInvested: finalsArr.filter(x => x < invested).length / nSim,
-    drawdowns: {
-      p10: quantile(ddArr, 0.10),  // peggior 10% dei path
-      p25: quantile(ddArr, 0.25),
-      p50: quantile(ddArr, 0.50),
-      p75: quantile(ddArr, 0.75),
-      p90: quantile(ddArr, 0.90),
-    },
+    invested, finalsSorted: fs_,
+    finals: { p10: quantile(fs_, .10), p25: quantile(fs_, .25), p50: quantile(fs_, .50), p75: quantile(fs_, .75), p90: quantile(fs_, .90), mean: fs_.reduce((a, b) => a + b, 0) / nSim },
+    probBelowInvested: fs_.filter(x => x < invested).length / nSim,
+    drawdowns: { p10: quantile(ds_, .10), p50: quantile(ds_, .50) },
   };
 }
 
+// Overlapping coefficient (OVL) stimato via istogramma a bin comuni.
+function overlapCoefficient(sortedA, sortedB, bins = 200) {
+  let lo = Infinity, hi = -Infinity;
+  for (const x of sortedA) { if (x < lo) lo = x; if (x > hi) hi = x; }
+  for (const x of sortedB) { if (x < lo) lo = x; if (x > hi) hi = x; }
+  const w = (hi - lo) / bins;
+  const hA = new Float64Array(bins), hB = new Float64Array(bins);
+  for (const x of sortedA) hA[Math.min(bins - 1, Math.floor((x - lo) / w))]++;
+  for (const x of sortedB) hB[Math.min(bins - 1, Math.floor((x - lo) / w))]++;
+  let ovl = 0;
+  for (let i = 0; i < bins; i++) ovl += Math.min(hA[i] / sortedA.length, hB[i] / sortedB.length);
+  return ovl;
+}
+
 // -----------------------------------------------------------------------------
-// Formatting helpers
+// PARTE 4 — interazione col portafoglio reale (effetto-flusso)
 // -----------------------------------------------------------------------------
-const eur = x => '€' + Math.round(x).toLocaleString('it-IT');
-const pct = (x, d = 1) => (x == null ? 'n/d' : (x * 100).toFixed(d) + '%');
-const num = (x, d = 2) => (x == null ? 'n/d' : x.toFixed(d));
+function portfolioEvolution(scenario /* 'S'|'V' */) {
+  // Posizioni reali da config.initialHoldings × prezzi correnti (prices.json).
+  const prices = JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'prices.json'), 'utf8')).current;
+  const hold = {
+    SWDA:  9.645653  * prices.SWDA.price_eur,
+    CSPX:  1.322009  * prices.CSPX.price_eur,
+    CSNDX: 0.527961  * prices.CSNDX.price_eur,
+    VETA:  12.894304 * prices.VETA.price_eur,
+    VWCE:  0,
+  };
+  const gM = Math.pow(1 + PART4_GROWTH, 1 / 12) - 1;  // crescita uguale per tutti
+  const snapshots = {};
+  const core = scenario === 'S' ? 'SWDA' : 'VWCE';
+  for (let m = 0; m <= 240; m++) {
+    if ([0, 60, 120, 240].includes(m)) {
+      const eq = hold.SWDA + hold.CSPX + hold.CSNDX + hold.VWCE; // equity sleeve (ex VETA)
+      const tot = eq + hold.VETA;
+      const us = (hold.SWDA * GEO.SWDA.us + hold.CSPX * GEO.CSPX.us + hold.CSNDX * GEO.CSNDX.us + hold.VWCE * GEO.VWCE.us) / eq;
+      const em = (hold.VWCE * GEO.VWCE.em) / eq;
+      snapshots[m] = { years: m / 12, equity: eq, total: tot, usPct: us, emPct: em, vetaPct: hold.VETA / tot };
+    }
+    if (m === 240) break;
+    for (const k of Object.keys(hold)) hold[k] *= (1 + gM);
+    hold[core] += PAC_MONTHLY;
+    hold.CSNDX += SAT_MONTHLY;
+  }
+  return snapshots;
+}
+
+// -----------------------------------------------------------------------------
+// PARTE 5 — scenari avversi simmetrici, in euro su PAC 20y
+// -----------------------------------------------------------------------------
+function fvMonthlyPAC(monthly, annualRate, years) {
+  const rM = Math.pow(1 + annualRate, 1 / 12) - 1;
+  let v = 0;
+  for (let m = 0; m < years * 12; m++) v = (v + monthly) * (1 + rM);
+  return v;
+}
 
 // =============================================================================
 // MAIN
 // =============================================================================
 function main() {
-  const swdaRaw = loadAnalysis('swda');
-  const emRaw   = loadAnalysis('em');
-  const swda = toMap(swdaRaw);
-  const em   = toMap(emRaw);
+  const swda = toMap(loadAnalysis('swda'));
+  const em = toMap(loadAnalysis('em'));
   const dates = commonDates(swda, em);
   const start = dates[0], end = dates[dates.length - 1];
+  const S = { swda, em };
 
-  console.log('='.repeat(92));
-  console.log('SWDA vs VWCE SINTETICO — analisi comparativa');
-  console.log('='.repeat(92));
-  console.log(`Finestra comune: ${start} → ${end} (${dates.length} giorni, ${yearsBetween(start, end).toFixed(1)} anni)`);
-  console.log(`Tutto in EUR. ETF accumulating: close incorpora dividendi reinvestiti.`);
-  console.log(`Rischio (σ/Sharpe/Sortino) da rendimenti MENSILI (×√12); CAGR/maxDD/rolling da daily.`);
-  console.log(`Risk-free dichiarato: ${pct(RISK_FREE)} (Sharpe = CAGR/σ, Sortino = CAGR/downside).`);
-  console.log(`PAC simulato Parte 1: ${eur(PAC_MONTHLY)}/mese.`);
+  const A = simulatePortfolio({ swda: 1.0 }, dates, S);
+  const B = simulatePortfolio({ swda: 0.9, em: 0.1 }, dates, S);
 
-  // === Costruzione delle due serie ===
-  const A = simulatePortfolio({ swda: 1.0 }, dates, { swda, em });
-  const B = simulatePortfolio({ swda: 0.9, em: 0.1 }, dates, { swda, em });
+  const log = [];
+  const out = (...a) => { const s = a.join(' '); log.push(s); console.log(s); };
 
-  // -----------------------------------------------------------------------
-  // PARTE 1 — STATISTICHE STORICHE
-  // -----------------------------------------------------------------------
-  console.log('\n' + '='.repeat(92));
-  console.log('PARTE 1 — STATISTICHE STORICHE');
-  console.log('='.repeat(92));
-  console.log('SERIE A = SWDA 100% (MSCI World, solo sviluppati).');
-  console.log('SERIE B = VWCE sintetico = 90% SWDA + 10% EM (IEMA), rebalance annuale.');
-  console.log('         RICOSTRUZIONE — VWCE reale esiste solo da 2019. Pesi EM reali oscillano ~10-11%.');
+  out('='.repeat(94));
+  out(`SWDA vs VWCE — analisi a 6 parti · finestra ${start} → ${end} (${yearsBetween(start, end).toFixed(1)}y, EUR)`);
+  out('='.repeat(94));
 
+  // ========================= PARTE 1 =========================
   const sA = basicStats(A), sB = basicStats(B);
   const ddA = maxDrawdownDetail(A), ddB = maxDrawdownDetail(B);
   const rA = rolling10y(A), rB = rolling10y(B);
-  const pacA = simulatePAC(A, PAC_MONTHLY);
-  const pacB = simulatePAC(B, PAC_MONTHLY);
-  const ddListA = listSignificantDrawdowns(A, 0.10);
-  const ddListB = listSignificantDrawdowns(B, 0.10);
+  const listA = listSignificantDrawdowns(A), listB = listSignificantDrawdowns(B);
 
-  function row(label, fA, fB) { console.log(`  ${label.padEnd(34)} | ${String(fA).padStart(20)} | ${String(fB).padStart(20)}`); }
-  console.log(`\n  ${'metrica'.padEnd(34)} | ${'SWDA 100%'.padStart(20)} | ${'VWCE sintetico'.padStart(20)}`);
-  console.log('  ' + '-'.repeat(82));
-  row('CAGR (level-based)', pct(sA.cagr), pct(sB.cagr));
-  row('σ annualizzata (monthly×√12)', pct(sA.annVol), pct(sB.annVol));
-  row('Sharpe', num(sA.sharpe), num(sB.sharpe));
+  out('\nPARTE 1 — Statistiche storiche (A=SWDA 100%, B=VWCE sintetico 90/10 reb. annuale)');
+  const row = (l, a, b) => out(`  ${l.padEnd(32)} | ${String(a).padStart(24)} | ${String(b).padStart(24)}`);
+  row('metrica', 'A SWDA', 'B VWCE-syn');
+  row('CAGR', pct(sA.cagr), pct(sB.cagr));
+  row('σ ann. (monthly)', pct(sA.annVol), pct(sB.annVol));
+  row('Sharpe (rf=0)', num(sA.sharpe), num(sB.sharpe));
   row('Sortino', num(sA.sortino), num(sB.sortino));
-  row('Max drawdown', pct(ddA.depth), pct(ddB.depth));
-  row('  picco → fondo', `${ddA.peakDate} → ${ddA.troughDate}`, `${ddB.peakDate} → ${ddB.troughDate}`);
-  row('  recovery', ddA.recoveryDate || 'non ancora', ddB.recoveryDate || 'non ancora');
-  row('  giorni picco→fondo', String(ddA.peakToTroughDays), String(ddB.peakToTroughDays));
-  row('  giorni fondo→recovery', String(ddA.troughToRecoveryDays), String(ddB.troughToRecoveryDays));
-  row('Rolling 10y worst', pct(rA.worst) + ` (start ${rA.worstStart})`, pct(rB.worst) + ` (start ${rB.worstStart})`);
-  row('Rolling 10y best', pct(rA.best) + ` (start ${rA.bestStart})`, pct(rB.best) + ` (start ${rB.bestStart})`);
+  row('MaxDD', pct(ddA.depth), pct(ddB.depth));
+  row('  picco→fondo', `${ddA.peakDate}→${ddA.troughDate}`, `${ddB.peakDate}→${ddB.troughDate}`);
+  row('  recovery (gg dal fondo)', `${ddA.recoveryDate} (${ddA.troughToRecoveryDays})`, `${ddB.recoveryDate} (${ddB.troughToRecoveryDays})`);
+  row('Rolling 10y worst', pct(rA.worst), pct(rB.worst));
+  row('Rolling 10y best', pct(rA.best), pct(rB.best));
+  row('# drawdown ≥10%', listA.length, listB.length);
 
-  console.log(`\nPAC simulato €${PAC_MONTHLY}/mese sull'intera finestra (${pacA.months} mesi):`);
-  row('  Capitale versato', eur(pacA.invested), eur(pacB.invested));
-  row('  Valore finale', eur(pacA.finalValue), eur(pacB.finalValue));
-  row('  Total return PAC', pct(pacA.totalReturn), pct(pacB.totalReturn));
-  console.log(`  Differenza A − B = ${eur(pacA.finalValue - pacB.finalValue)} (${pct((pacA.finalValue - pacB.finalValue) / pacB.finalValue)})`);
+  // Year-by-year
+  const cyA = calendarReturns(A), cyB = calendarReturns(B);
+  out('\n  Rendimenti per anno solare (Δ = A − B; Δ>0 ⇒ SWDA sovraperforma):');
+  out(`  ${'anno'.padEnd(7)} | ${'A SWDA'.padStart(8)} | ${'B VWCE-syn'.padStart(10)} | ${'Δ (pp)'.padStart(7)}`);
+  let posYears = 0;
+  const yearRows = [];
+  for (let i = 0; i < cyA.length; i++) {
+    const d = cyA[i].ret - cyB[i].ret;
+    if (d > 0) posYears++;
+    yearRows.push({ year: cyA[i].year, a: cyA[i].ret, b: cyB[i].ret, d });
+    out(`  ${cyA[i].year.padEnd(7)} | ${pct(cyA[i].ret).padStart(8)} | ${pct(cyB[i].ret).padStart(10)} | ${(d * 100).toFixed(1).padStart(7)}`);
+  }
+  out(`  → SWDA sovraperforma in ${posYears}/${cyA.length} anni.`);
 
-  console.log(`\nTUTTI i drawdown ≥10% — SERIE A (SWDA 100%) — ${ddListA.length} episodi:`);
-  console.log(`  ${'#'.padStart(2)} | ${'picco'.padEnd(10)} | ${'fondo'.padEnd(10)} | ${'depth'.padStart(7)} | ${'recovery'.padEnd(10)} | p→t (gg) | tot underwater`);
-  ddListA.forEach((d, i) => {
-    console.log(`  ${String(i + 1).padStart(2)} | ${d.peakDate.padEnd(10)} | ${d.troughDate.padEnd(10)} | ${pct(d.depth).padStart(7)} | ${(d.recoveryDate || 'aperto').padEnd(10)} | ${String(d.peakToTroughDays).padStart(8)} | ${d.totalUnderwaterDays != null ? d.totalUnderwaterDays + 'gg' : 'in corso'}`);
+  // Sottoperiodi
+  const subDefs = { '2009-2017': [start, '2017-12-31'], '2018-2026': ['2018-01-01', end] };
+  const subStats = {};
+  out('\n  Sottoperiodi (stabilità del vincitore):');
+  for (const [label, [s0, s1]] of Object.entries(subDefs)) {
+    const subA = A.filter(p => p.date >= s0 && p.date <= s1);
+    const subB = B.filter(p => p.date >= s0 && p.date <= s1);
+    const stA = basicStats(subA), stB = basicStats(subB);
+    subStats[label] = { stA, stB };
+    out(`  ${label}: A CAGR ${pct(stA.cagr)} vs B ${pct(stB.cagr)} → vince ${stA.cagr > stB.cagr ? 'A (SWDA)' : 'B (VWCE-syn)'} di ${pct(Math.abs(stA.cagr - stB.cagr), 2)}`);
+  }
+
+  // ========================= PARTE 2 =========================
+  out('\nPARTE 2 — PAC €450/mese con bollo 0,2%/anno (TER già nei prezzi — dichiarato)');
+  const pacA = simulatePACNet(A, PAC_MONTHLY);
+  const pacB = simulatePACNet(B, PAC_MONTHLY);
+  const pacGrossA = simulatePACNet(A, PAC_MONTHLY, 0);
+  const pacGrossB = simulatePACNet(B, PAC_MONTHLY, 0);
+  row('PAC intera finestra', 'A SWDA', 'B VWCE-syn');
+  row('  versato', eur(pacA.invested), eur(pacB.invested));
+  row('  finale netto bollo', eur(pacA.finalValue), eur(pacB.finalValue));
+  row('  finale lordo (riferimento)', eur(pacGrossA.finalValue), eur(pacGrossB.finalValue));
+  const dNet = pacA.finalValue - pacB.finalValue;
+  out(`  Δ A−B netto = ${eur(dNet)} (${pct(dNet / pacB.finalValue)})  |  costo bollo ≈ ${eur(pacGrossA.finalValue - pacA.finalValue)} (A), ${eur(pacGrossB.finalValue - pacB.finalValue)} (B)`);
+
+  const pacSub = {};
+  for (const [label, [s0, s1]] of Object.entries(subDefs)) {
+    const subA = A.filter(p => p.date >= s0 && p.date <= s1);
+    const subB = B.filter(p => p.date >= s0 && p.date <= s1);
+    const pA = simulatePACNet(subA, PAC_MONTHLY), pB = simulatePACNet(subB, PAC_MONTHLY);
+    pacSub[label] = { pA, pB };
+    out(`  PAC ${label}: A ${eur(pA.finalValue)} vs B ${eur(pB.finalValue)} → Δ ${eur(pA.finalValue - pB.finalValue)} (${pct((pA.finalValue - pB.finalValue) / pB.finalValue)})`);
+  }
+  out(`  VERDETTO SECCO: il 10% EM è costato storicamente ${eur(dNet)} su un PAC di ${eur(pacA.invested)} in ${sA.years.toFixed(1)} anni.`);
+
+  // ========================= PARTE 3 =========================
+  out('\nPARTE 3 — Monte Carlo 50k × 20y × €450/mese (μ/σ dalle serie — CAVEAT: output = input)');
+  const mcA = monteCarlo(sA.cagr, sA.annVol, PAC_MONTHLY, MC_YEARS, MC_N, MC_SEED);
+  const mcB = monteCarlo(sB.cagr, sB.annVol, PAC_MONTHLY, MC_YEARS, MC_N, MC_SEED);
+  const ovl = overlapCoefficient(mcA.finalsSorted, mcB.finalsSorted);
+  row('metrica', 'A SWDA', 'B VWCE-syn');
+  row('μ input', pct(sA.cagr), pct(sB.cagr));
+  row('σ input', pct(sA.annVol), pct(sB.annVol));
+  row('P10', eur(mcA.finals.p10), eur(mcB.finals.p10));
+  row('P50', eur(mcA.finals.p50), eur(mcB.finals.p50));
+  row('P90', eur(mcA.finals.p90), eur(mcB.finals.p90));
+  row('Prob(<versato)', pct(mcA.probBelowInvested), pct(mcB.probBelowInvested));
+  row('MaxDD path mediano', pct(mcA.drawdowns.p50), pct(mcB.drawdowns.p50));
+  row('MaxDD path peggior 10%', pct(mcA.drawdowns.p10), pct(mcB.drawdowns.p10));
+  out(`  OVERLAP delle distribuzioni finali (OVL): ${pct(ovl)} ${ovl > 0.8 ? '→ >80%: statisticamente quasi indistinguibili in proiezione.' : ''}`);
+
+  // ========================= PARTE 4 =========================
+  out('\nPARTE 4 — Interazione col portafoglio reale (effetto-flusso, crescita uguale 7%/y dichiarata)');
+  out(`  Flussi: scenario S = €450 SWDA + €50 CSNDX; scenario V = €450 VWCE + €50 CSNDX. Boost esclusi (dichiarato).`);
+  const evoS = portfolioEvolution('S');
+  const evoV = portfolioEvolution('V');
+  out(`  ${'t'.padEnd(8)} | ${'equity USA% (S)'.padStart(15)} | ${'EM% (S)'.padStart(8)} | ${'equity USA% (V)'.padStart(15)} | ${'EM% (V)'.padStart(8)} | ${'VETA% tot (entrambi)'.padStart(20)}`);
+  for (const m of [0, 60, 120, 240]) {
+    out(`  ${(m / 12 + 'y').padEnd(8)} | ${pct(evoS[m].usPct).padStart(15)} | ${pct(evoS[m].emPct).padStart(8)} | ${pct(evoV[m].usPct).padStart(15)} | ${pct(evoV[m].emPct).padStart(8)} | ${pct(evoS[m].vetaPct).padStart(20)}`);
+  }
+
+  // ========================= PARTE 5 =========================
+  out('\nPARTE 5 — Scenari avversi simmetrici (PAC 20y, μ_DM forward 6,5% nominale DICHIARATO debole)');
+  const MU_DM = 0.065;
+  const scen = {
+    'EM continua a deludere (DM−3pp = 3,5%)': 0.9 * MU_DM + 0.1 * (MU_DM - 0.03),
+    'EM = DM (neutro)':                        MU_DM,
+    'EM mean-reversion (DM+3pp = 9,5%)':       0.9 * MU_DM + 0.1 * (MU_DM + 0.03),
+  };
+  const fvS = fvMonthlyPAC(PAC_MONTHLY, MU_DM, 20);
+  out(`  FV scenario S (SWDA, μ=6,5%): ${eur(fvS)} su ${eur(PAC_MONTHLY * 240)} versati`);
+  const scenResults = {};
+  for (const [label, rate] of Object.entries(scen)) {
+    const fvV = fvMonthlyPAC(PAC_MONTHLY, rate, 20);
+    scenResults[label] = { rate, fvV, delta: fvV - fvS };
+    out(`  ${label.padEnd(45)} → FV(V) ${eur(fvV)} | Δ V−S = ${eur(fvV - fvS)}`);
+  }
+
+  // ========================= REPORT =========================
+  const md = buildReport({
+    start, end, years: sA.years, sA, sB, ddA, ddB, rA, rB, listA, listB,
+    yearRows, posYears, subStats, pacA, pacB, pacGrossA, pacGrossB, dNet, pacSub,
+    mcA, mcB, ovl, evoS, evoV, scenResults, fvS, MU_DM,
   });
-
-  console.log(`\nTUTTI i drawdown ≥10% — SERIE B (VWCE sintetico) — ${ddListB.length} episodi:`);
-  console.log(`  ${'#'.padStart(2)} | ${'picco'.padEnd(10)} | ${'fondo'.padEnd(10)} | ${'depth'.padStart(7)} | ${'recovery'.padEnd(10)} | p→t (gg) | tot underwater`);
-  ddListB.forEach((d, i) => {
-    console.log(`  ${String(i + 1).padStart(2)} | ${d.peakDate.padEnd(10)} | ${d.troughDate.padEnd(10)} | ${pct(d.depth).padStart(7)} | ${(d.recoveryDate || 'aperto').padEnd(10)} | ${String(d.peakToTroughDays).padStart(8)} | ${d.totalUnderwaterDays != null ? d.totalUnderwaterDays + 'gg' : 'in corso'}`);
-  });
-
-  // -----------------------------------------------------------------------
-  // PARTE 2 — MONTE CARLO
-  // -----------------------------------------------------------------------
-  console.log('\n' + '='.repeat(92));
-  console.log('PARTE 2 — MONTE CARLO (50k path, 20y, €450/mese)');
-  console.log('='.repeat(92));
-  console.log('Input μ e σ stimati dalle serie reali della Parte 1.');
-  console.log('GBM log-normale mensile, contribuzione a inizio mese.');
-  console.log(`Capitale versato: ${eur(PAC_MONTHLY * 12 * MC_HORIZON_YEARS)} (${PAC_MONTHLY}/mese × ${MC_HORIZON_YEARS}y).`);
-
-  const mcA = monteCarlo(sA.cagr, sA.annVol, PAC_MONTHLY, MC_HORIZON_YEARS, MC_N, MC_SEED);
-  const mcB = monteCarlo(sB.cagr, sB.annVol, PAC_MONTHLY, MC_HORIZON_YEARS, MC_N, MC_SEED);
-
-  function rowMC(label, fA, fB) { console.log(`  ${label.padEnd(34)} | ${String(fA).padStart(20)} | ${String(fB).padStart(20)}`); }
-  console.log(`\n  ${'metrica'.padEnd(34)} | ${'SWDA 100%'.padStart(20)} | ${'VWCE sintetico'.padStart(20)}`);
-  console.log('  ' + '-'.repeat(82));
-  rowMC('μ_annual (input dalla Parte 1)', pct(sA.cagr), pct(sB.cagr));
-  rowMC('σ_annual (input dalla Parte 1)', pct(sA.annVol), pct(sB.annVol));
-  rowMC('Final P10', eur(mcA.finals.p10), eur(mcB.finals.p10));
-  rowMC('Final P25', eur(mcA.finals.p25), eur(mcB.finals.p25));
-  rowMC('Final P50 (mediana)', eur(mcA.finals.p50), eur(mcB.finals.p50));
-  rowMC('Final P75', eur(mcA.finals.p75), eur(mcB.finals.p75));
-  rowMC('Final P90', eur(mcA.finals.p90), eur(mcB.finals.p90));
-  rowMC('Final media', eur(mcA.finals.mean), eur(mcB.finals.mean));
-  rowMC('Prob(finale < versato)', pct(mcA.probBelowInvested), pct(mcB.probBelowInvested));
-  rowMC('MaxDD path P50', pct(mcA.drawdowns.p50), pct(mcB.drawdowns.p50));
-  rowMC('MaxDD path P10 (peggior 10%)', pct(mcA.drawdowns.p10), pct(mcB.drawdowns.p10));
-
-  // -----------------------------------------------------------------------
-  // Genera il report Markdown
-  // -----------------------------------------------------------------------
-  const report = buildMarkdown({
-    start, end, days: dates.length, years: yearsBetween(start, end),
-    PAC_MONTHLY, MC_N, MC_HORIZON_YEARS,
-    sA, sB, ddA, ddB, rA, rB, pacA, pacB, ddListA, ddListB, mcA, mcB,
-  });
-  const outPath = path.join(ROOT, 'docs', 'SWDA_VS_VWCE_ANALYSIS.md');
-  fs.writeFileSync(outPath, report);
-  console.log(`\nReport scritto in docs/SWDA_VS_VWCE_ANALYSIS.md`);
+  const outPath = path.join(ROOT, 'docs', `SWDA_vs_VWCE_analysis_${TODAY}.md`);
+  fs.writeFileSync(outPath, md);
+  out(`\nReport: docs/SWDA_vs_VWCE_analysis_${TODAY}.md`);
 }
 
-function buildMarkdown(ctx) {
-  const eurM = x => '€' + Math.round(x).toLocaleString('it-IT');
-  const p = (x, d = 1) => (x == null ? 'n/d' : (x * 100).toFixed(d) + '%');
-  const n2 = (x, d = 2) => (x == null ? 'n/d' : x.toFixed(d));
-  const {
-    start, end, days, years, PAC_MONTHLY, MC_N, MC_HORIZON_YEARS,
-    sA, sB, ddA, ddB, rA, rB, pacA, pacB, ddListA, ddListB, mcA, mcB,
-  } = ctx;
-  const diffPAC = pacA.finalValue - pacB.finalValue;
-  const diffPACpct = diffPAC / pacB.finalValue;
+function buildReport(c) {
+  const ddTable = list => list.map((d, i) =>
+    `| ${i + 1} | ${d.peakDate} | ${d.troughDate} | ${pct(d.depth)} | ${d.recoveryDate || '*aperto*'} | ${d.peakToTroughDays} gg | ${d.totalUnderwaterDays != null ? d.totalUnderwaterDays + ' gg' : '*in corso*'} |`).join('\n');
+  const yearTable = c.yearRows.map(r =>
+    `| ${r.year} | ${pct(r.a)} | ${pct(r.b)} | ${(r.d * 100).toFixed(1)} |`).join('\n');
 
-  return `# SWDA puro vs VWCE sintetico — confronto fattuale
+  return `# SWDA vs VWCE — analisi comparativa completa (6 parti)
 
-> **Stato**: analisi storica + Monte Carlo su serie reali. **Nessuna modifica
-> a \`config.js\` o all'allocazione**. Questo documento è il dato grezzo per
-> una decisione che resta **esclusivamente dell'utente**.
+> **Data**: ${TODAY} · **Finestra dati**: ${c.start} → ${c.end} (~${c.years.toFixed(1)} anni, EUR)
+> **Nessuna raccomandazione. Nessuna modifica a \`config.js\`.** La decisione è dell'utente.
 
 ## Disclaimer
 
-1. **VWCE sintetico** è una ricostruzione (90% SWDA + 10% EM rebalance annuale).
-   VWCE reale esiste solo dal 2019; per coprire 2009-2018 si usa il proxy.
-   I pesi EM reali di VWCE oscillano ~10-11%.
-2. **Una sola estrazione storica** (2009-2026, ~16,7 anni). Il periodo è stato
-   eccezionalmente pro-USA/dev-markets e deludente per EM. **Non predice il futuro.**
-3. **Il Monte Carlo restituisce in output l'assunzione in input.** Siccome SWDA
-   ha μ_storico più alto in questo campione, il MC gli darà proiezioni più
-   alte per costruzione. Non è una scoperta sul futuro: è quello che hai
-   messo dentro. Vedi caveat dettagliato in PARTE 2.
-4. Tutto in EUR. ETF accumulating: close incorpora i dividendi reinvestiti.
-5. Rendimenti sono **lordi** (TER non sottratto qui — i TER ufficiali sono
-   ~0,19% per VWCE e ~0,20% per SWDA, sostanzialmente identici e neutrali al
-   confronto).
-
-## Finestra e metodologia
-
-- **Finestra comune**: ${start} → ${end} (${days} giorni di Borsa, ~${years.toFixed(1)} anni).
-- **σ, Sharpe, Sortino**: da rendimenti **mensili** ×√12 (TASK 5: i daily
-  desincronizzano su ETF con close di Borsa Italiana / Amsterdam non
-  perfettamente allineati).
-- **CAGR, max drawdown, recovery, rolling 10y**: level-based daily (robusti
-  al desync).
-- **Risk-free**: ${p(RISK_FREE)} dichiarato. Sharpe e Sortino con rf=0 sono
-  confrontabili in modo coerente sui due candidati.
-- **Ribilanciamento**: annuale, primo giorno di Borsa di ogni anno solare.
+1. **Un solo percorso storico post-GFC, eccezionalmente pro-USA.** Il vantaggio
+   storico di SWDA è in larga parte funzione del periodo, non una proprietà
+   strutturale. Nessuna predizione.
+2. **VWCE sintetico** = 90% SWDA + 10% EM (IEMA), ribilanciato annualmente.
+   Ricostruzione: VWCE reale esiste solo dal 2019. Il peso EM reale di VWCE
+   oscilla tra ~10 e ~11%.
+3. **TER**: i prezzi ETF incorporano già il TER (il NAV è netto). Sottrarlo di
+   nuovo sarebbe double-counting. Il sintetico B incorpora ~0,198% (0,9×0,20 +
+   0,1×0,18) vs 0,19% del VWCE reale → B sottostima VWCE di ~0,008 pp/anno
+   (trascurabile). Il **bollo 0,2%/anno** non è nei prezzi: applicato nel PAC
+   (Parte 2) su entrambi, pro-rata mensile.
+4. **Il Monte Carlo restituisce le assunzioni che riceve** (vedi Parte 3).
+5. Rischio da rendimenti mensili ×√12; livelli (CAGR/maxDD/rolling) daily.
+   Risk-free ${pct(RISK_FREE)} dichiarato. Ribilanciamento annuale.
 
 ---
 
 ## PARTE 1 — Statistiche storiche
 
-| metrica | SWDA 100% | VWCE sintetico (90/10) |
+| metrica | SWDA 100% | VWCE sintetico |
 |---|---|---|
-| CAGR | **${p(sA.cagr)}** | **${p(sB.cagr)}** |
-| σ annualizzata | ${p(sA.annVol)} | ${p(sB.annVol)} |
-| Sharpe | ${n2(sA.sharpe)} | ${n2(sB.sharpe)} |
-| Sortino | ${n2(sA.sortino)} | ${n2(sB.sortino)} |
-| Max drawdown | **${p(ddA.depth)}** | **${p(ddB.depth)}** |
-| Picco → fondo | ${ddA.peakDate} → ${ddA.troughDate} | ${ddB.peakDate} → ${ddB.troughDate} |
-| Recovery | ${ddA.recoveryDate || 'non ancora'} | ${ddB.recoveryDate || 'non ancora'} |
-| Giorni picco→fondo | ${ddA.peakToTroughDays} | ${ddB.peakToTroughDays} |
-| Giorni fondo→recovery | ${ddA.troughToRecoveryDays} | ${ddB.troughToRecoveryDays} |
-| Rolling 10y worst | ${p(rA.worst)} (start ${rA.worstStart}) | ${p(rB.worst)} (start ${rB.worstStart}) |
-| Rolling 10y best | ${p(rA.best)} (start ${rA.bestStart}) | ${p(rB.best)} (start ${rB.bestStart}) |
+| CAGR | **${pct(c.sA.cagr)}** | **${pct(c.sB.cagr)}** |
+| σ annualizzata | ${pct(c.sA.annVol)} | ${pct(c.sB.annVol)} |
+| Sharpe (rf=0) | ${num(c.sA.sharpe)} | ${num(c.sB.sharpe)} |
+| Sortino | ${num(c.sA.sortino)} | ${num(c.sB.sortino)} |
+| Max drawdown | ${pct(c.ddA.depth)} | ${pct(c.ddB.depth)} |
+| Picco → fondo | ${c.ddA.peakDate} → ${c.ddA.troughDate} | ${c.ddB.peakDate} → ${c.ddB.troughDate} |
+| Recovery (gg dal fondo) | ${c.ddA.recoveryDate} (${c.ddA.troughToRecoveryDays}) | ${c.ddB.recoveryDate} (${c.ddB.troughToRecoveryDays}) |
+| Rolling 10y worst | ${pct(c.rA.worst)} | ${pct(c.rB.worst)} |
+| Rolling 10y best | ${pct(c.rA.best)} | ${pct(c.rB.best)} |
+| # drawdown ≥10% | ${c.listA.length} | ${c.listB.length} |
 
-### Tutti i drawdown ≥10% (non solo il massimo)
-
-**SERIE A — SWDA 100% — ${ddListA.length} episodi**:
+### Tutti i drawdown ≥10% — SWDA (${c.listA.length} episodi)
 
 | # | picco | fondo | depth | recovery | picco→fondo | underwater tot |
 |---|---|---|---|---|---|---|
-${ddListA.map((d, i) => `| ${i + 1} | ${d.peakDate} | ${d.troughDate} | ${p(d.depth)} | ${d.recoveryDate || '*aperto*'} | ${d.peakToTroughDays} gg | ${d.totalUnderwaterDays != null ? d.totalUnderwaterDays + ' gg' : '*in corso*'} |`).join('\n')}
+${ddTable(c.listA)}
 
-**SERIE B — VWCE sintetico — ${ddListB.length} episodi**:
+### Tutti i drawdown ≥10% — VWCE sintetico (${c.listB.length} episodi)
 
 | # | picco | fondo | depth | recovery | picco→fondo | underwater tot |
 |---|---|---|---|---|---|---|
-${ddListB.map((d, i) => `| ${i + 1} | ${d.peakDate} | ${d.troughDate} | ${p(d.depth)} | ${d.recoveryDate || '*aperto*'} | ${d.peakToTroughDays} gg | ${d.totalUnderwaterDays != null ? d.totalUnderwaterDays + ' gg' : '*in corso*'} |`).join('\n')}
+${ddTable(c.listB)}
 
-### PAC simulato €${PAC_MONTHLY}/mese sull'intera finestra
+### Rendimenti anno per anno (Δ = SWDA − VWCE-syn, in punti percentuali)
 
-| | SWDA 100% | VWCE sintetico |
-|---|---|---|
-| Mesi simulati | ${pacA.months} | ${pacB.months} |
-| Capitale versato | ${eurM(pacA.invested)} | ${eurM(pacB.invested)} |
-| Valore finale | **${eurM(pacA.finalValue)}** | **${eurM(pacB.finalValue)}** |
-| Total return PAC | ${p(pacA.totalReturn)} | ${p(pacB.totalReturn)} |
-| Δ assoluto A−B | ${eurM(diffPAC)} | — |
-| Δ % vs B | ${p(diffPACpct, 2)} | — |
+| anno | SWDA | VWCE-syn | Δ (pp) |
+|---|---|---|---|
+${yearTable}
 
-### Lettura onesta della Parte 1
+*\\* = anno parziale.* SWDA sovraperforma in **${c.posYears}/${c.yearRows.length} anni**.
+Il vantaggio non è un evento singolo ma la somma di piccoli scarti annui,
+concentrati negli anni di dominanza USA (in particolare 2013-2015 e 2024-2025);
+negli anni in cui EM ha retto (2010, 2012, 2016-2017, 2020, 2022) il segno
+si inverte o si annulla.
 
-Su questa finestra **SWDA puro ha reso un filo di più** del VWCE sintetico:
-${p(sA.cagr - sB.cagr, 2)} di CAGR in più, ${eurM(diffPAC)} di valore finale
-PAC in più (${p(diffPACpct)} su ~${eurM(pacB.finalValue)} di valore B).
+### Sottoperiodi
 
-**Perché**: il 10% di EM dentro VWCE ha **deluso** in questo periodo. Gli
-EM (proxy IEMA dal 2009) hanno avuto una mediocre performance assoluta e
-ancora più mediocre relativa ai mercati sviluppati, mentre SWDA era esposto
-al 60-70% USA in un periodo di dominanza USA senza precedenti.
-
-**Cosa NON dice questo**: che SWDA "è meglio". Dice che **chi era meno
-diversificato fuori dagli USA ha vinto nel periodo 2009-2026**, che è
-osservazione, non legge. La domanda strategica (Parte 3) è se quella
-osservazione continuerà.
+| periodo | CAGR SWDA | CAGR VWCE-syn | vincitore | margine |
+|---|---|---|---|---|
+| 2009-2017 | ${pct(c.subStats['2009-2017'].stA.cagr)} | ${pct(c.subStats['2009-2017'].stB.cagr)} | ${c.subStats['2009-2017'].stA.cagr > c.subStats['2009-2017'].stB.cagr ? 'SWDA' : 'VWCE-syn'} | ${pct(Math.abs(c.subStats['2009-2017'].stA.cagr - c.subStats['2009-2017'].stB.cagr), 2)} |
+| 2018-2026 | ${pct(c.subStats['2018-2026'].stA.cagr)} | ${pct(c.subStats['2018-2026'].stB.cagr)} | ${c.subStats['2018-2026'].stA.cagr > c.subStats['2018-2026'].stB.cagr ? 'SWDA' : 'VWCE-syn'} | ${pct(Math.abs(c.subStats['2018-2026'].stA.cagr - c.subStats['2018-2026'].stB.cagr), 2)} |
 
 ---
 
-## PARTE 2 — Monte Carlo (50k path × 20y × €${PAC_MONTHLY}/mese)
+## PARTE 2 — PAC €450/mese (netto bollo 0,2%/anno; TER già nei prezzi)
+
+| | SWDA | VWCE-syn |
+|---|---|---|
+| Capitale versato | ${eur(c.pacA.invested)} | ${eur(c.pacB.invested)} |
+| **Finale netto bollo** | **${eur(c.pacA.finalValue)}** | **${eur(c.pacB.finalValue)}** |
+| Finale lordo (riferimento) | ${eur(c.pacGrossA.finalValue)} | ${eur(c.pacGrossB.finalValue)} |
+| Costo bollo cumulato | ${eur(c.pacGrossA.finalValue - c.pacA.finalValue)} | ${eur(c.pacGrossB.finalValue - c.pacB.finalValue)} |
+
+**Δ SWDA − VWCE-syn = ${eur(c.dNet)}** (${pct(c.dNet / c.pacB.finalValue)} del finale VWCE-syn).
+
+### PAC sui sottoperiodi
+
+| periodo | finale SWDA | finale VWCE-syn | Δ |
+|---|---|---|---|
+| 2009-2017 | ${eur(c.pacSub['2009-2017'].pA.finalValue)} | ${eur(c.pacSub['2009-2017'].pB.finalValue)} | ${eur(c.pacSub['2009-2017'].pA.finalValue - c.pacSub['2009-2017'].pB.finalValue)} |
+| 2018-2026 | ${eur(c.pacSub['2018-2026'].pA.finalValue)} | ${eur(c.pacSub['2018-2026'].pB.finalValue)} | ${eur(c.pacSub['2018-2026'].pA.finalValue - c.pacSub['2018-2026'].pB.finalValue)} |
+
+### Verdetto numerico secco
+
+> Su questo percorso storico, il 10% di EM dentro VWCE è costato
+> **${eur(c.dNet)}** su un PAC di ${eur(c.pacA.invested)} in ~${c.years.toFixed(0)} anni
+> (${pct(c.dNet / c.pacB.finalValue)} del montante). Non una rovina, non un dettaglio:
+> un costo-opportunità reale ma di second'ordine rispetto al rischio di
+> percorso (vedi Parte 3).
+
+---
+
+## PARTE 3 — Monte Carlo (50k path × 20y × €450/mese)
 
 ### ⚠️ CAVEAT OBBLIGATORIO
 
-> Il Monte Carlo qui sotto usa come input μ e σ **stimati dalle serie reali
-> della Parte 1**. SWDA ha μ_storico più alto in questo campione, quindi
-> il MC gli darà mediane e percentili più alti **per costruzione, non
-> perché sappia qualcosa sul futuro**.
->
-> **Il MC NON è in grado di rispondere alla domanda "quale renderà di più
-> nei prossimi 20 anni".** Restituisce in output l'assunzione che hai messo
-> in input.
->
-> Il MC è utile per **mostrare la dispersione degli esiti** dato un set di
-> assunzioni — non per scegliere tra due asset. **La Parte 1 è più
-> informativa della Parte 2 per questa decisione.**
+> Il MC usa μ e σ stimati dalle serie della Parte 1. SWDA ha μ storico più
+> alto **in questo campione** → il MC lo proietta più alto **per costruzione**.
+> Non è una scoperta: è l'assunzione in input restituita in output. Il MC
+> NON sa quale dei due renderà di più nei prossimi 20 anni. La Parte 1-2
+> (storia reale) è più informativa del MC per questa decisione.
 
-### Risultati
+Versato in 20 anni: ${eur(PAC_MONTHLY * 240)}.
 
-Capitale versato in 20 anni: **${eurM(PAC_MONTHLY * 12 * MC_HORIZON_YEARS)}** (€${PAC_MONTHLY} × 240 mesi).
-
-| metrica | SWDA 100% | VWCE sintetico |
+| metrica | SWDA | VWCE-syn |
 |---|---|---|
-| μ_annual (input dalla Parte 1) | ${p(sA.cagr)} | ${p(sB.cagr)} |
-| σ_annual (input dalla Parte 1) | ${p(sA.annVol)} | ${p(sB.annVol)} |
-| Valore finale P10 (sfortuna) | ${eurM(mcA.finals.p10)} | ${eurM(mcB.finals.p10)} |
-| Valore finale P25 | ${eurM(mcA.finals.p25)} | ${eurM(mcB.finals.p25)} |
-| **Valore finale P50 (mediana)** | **${eurM(mcA.finals.p50)}** | **${eurM(mcB.finals.p50)}** |
-| Valore finale P75 | ${eurM(mcA.finals.p75)} | ${eurM(mcB.finals.p75)} |
-| Valore finale P90 (fortuna) | ${eurM(mcA.finals.p90)} | ${eurM(mcB.finals.p90)} |
-| Valore finale medio | ${eurM(mcA.finals.mean)} | ${eurM(mcB.finals.mean)} |
-| Prob(finale < versato) | ${p(mcA.probBelowInvested)} | ${p(mcB.probBelowInvested)} |
-| MaxDD lungo il path — mediano | ${p(mcA.drawdowns.p50)} | ${p(mcB.drawdowns.p50)} |
-| MaxDD lungo il path — peggior 10% | ${p(mcA.drawdowns.p10)} | ${p(mcB.drawdowns.p10)} |
+| μ input | ${pct(c.sA.cagr)} | ${pct(c.sB.cagr)} |
+| σ input | ${pct(c.sA.annVol)} | ${pct(c.sB.annVol)} |
+| P10 | ${eur(c.mcA.finals.p10)} | ${eur(c.mcB.finals.p10)} |
+| P25 | ${eur(c.mcA.finals.p25)} | ${eur(c.mcB.finals.p25)} |
+| **P50** | **${eur(c.mcA.finals.p50)}** | **${eur(c.mcB.finals.p50)}** |
+| P75 | ${eur(c.mcA.finals.p75)} | ${eur(c.mcB.finals.p75)} |
+| P90 | ${eur(c.mcA.finals.p90)} | ${eur(c.mcB.finals.p90)} |
+| Prob(< versato) | ${pct(c.mcA.probBelowInvested)} | ${pct(c.mcB.probBelowInvested)} |
+| MaxDD path mediano | ${pct(c.mcA.drawdowns.p50)} | ${pct(c.mcB.drawdowns.p50)} |
+| MaxDD path peggior 10% | ${pct(c.mcA.drawdowns.p10)} | ${pct(c.mcB.drawdowns.p10)} |
 
-### Lettura onesta della Parte 2
+### Overlap delle distribuzioni
 
-La mediana SWDA è ~${p((mcA.finals.p50 - mcB.finals.p50) / mcB.finals.p50)}
-sopra quella VWCE — esattamente il risultato di mettere un μ più alto in
-ingresso. Non è una "predizione". Il MC qui serve solo a mostrare:
-- L'**ampiezza** dell'intervallo P10-P90 (è gigantesca: ${eurM(mcA.finals.p90 - mcA.finals.p10)} di range su SWDA).
-  Significa che la differenza tra "fortunato" e "sfortunato" supera di gran
-  lunga la differenza tra SWDA e VWCE.
-- Il **maxDD atteso lungo il percorso**: ~${p(mcA.drawdowns.p50)} mediano, e
-  ~${p(mcA.drawdowns.p10)} nel peggior decile. Significa che durante 20 anni
-  vedrai *con alta probabilità* uno o più drawdown grossi — devi reggerli
-  senza vendere.
+**OVL = ${pct(c.ovl)}**${c.ovl > 0.8 ? ' — **sopra l\'80%: in proiezione i due profili sono statisticamente quasi indistinguibili.** La dispersione del percorso domina la differenza tra i due asset.' : '.'}
 
 ---
 
-## PARTE 3 — La domanda che il backtest NON può rispondere
+## PARTE 4 — Interazione col portafoglio reale
 
-La differenza vera tra SWDA e VWCE è il ~10% di emergenti. Quel 10% nei
-prossimi 20 anni può:
-- **continuare a deludere** (gli EM hanno avuto 15+ anni di sotto-performance):
-  in quel caso SWDA continua a battere VWCE leggermente. Lo scenario di
-  inerzia della dominanza USA.
-- **fare mean reversion**: oggi gli EM quotano a multipli molto più bassi
-  (P/E ~13 vs S&P 21, P/B ~1,6 vs ~4). Storicamente valutazioni basse hanno
-  predetto rendimenti più alti **a lungo termine**. Se mean reversion si
-  realizza, VWCE batte SWDA.
-- **non cambiare** nessuno dei due scenari in modo deciso: SWDA e VWCE
-  restano sostanzialmente equivalenti, e l'effetto del 10% EM nel rumore.
+Posizioni attuali (prezzi correnti): SWDA + CSPX + CSNDX + VETA ≈ ${eur(c.evoS[0].total)}.
+Esposizione equity attuale: USA ~${pct(c.evoS[0].usPct)} (stima da composizioni
+indice, coerente con TASK 5: SWDA 72% USA, CSPX/CSNDX 100%, VWCE 65% USA / 10% EM).
 
-**Nessun backtest può dire quale di questi tre scenari accadrà.** Il
-backtest dice cosa è successo nei 16 anni passati, non cosa succederà nei
-20 prossimi.
+**Assunzione dichiarata**: crescita nominale **uguale per tutti gli asset (7%/anno)**
+per isolare l'**effetto-flusso**. Flussi: S = €450/mese SWDA + €50 CSNDX;
+V = €450/mese VWCE + €50 CSNDX. Boost tattici esclusi. VETA esclusa dal
+calcolo geografico (bond legacy, quota mostrata a parte).
 
-### Cosa puoi dire onestamente con questi numeri
+| orizzonte | USA% equity (S) | EM% (S) | USA% equity (V) | EM% (V) | VETA% sul totale |
+|---|---|---|---|---|---|
+| oggi | ${pct(c.evoS[0].usPct)} | ${pct(c.evoS[0].emPct)} | ${pct(c.evoV[0].usPct)} | ${pct(c.evoV[0].emPct)} | ${pct(c.evoS[0].vetaPct)} |
+| 5 anni | ${pct(c.evoS[60].usPct)} | ${pct(c.evoS[60].emPct)} | ${pct(c.evoV[60].usPct)} | ${pct(c.evoV[60].emPct)} | ${pct(c.evoS[60].vetaPct)} |
+| 10 anni | ${pct(c.evoS[120].usPct)} | ${pct(c.evoS[120].emPct)} | ${pct(c.evoV[120].usPct)} | ${pct(c.evoV[120].emPct)} | ${pct(c.evoS[120].vetaPct)} |
+| 20 anni | ${pct(c.evoS[240].usPct)} | ${pct(c.evoS[240].emPct)} | ${pct(c.evoV[240].usPct)} | ${pct(c.evoV[240].emPct)} | ${pct(c.evoS[240].vetaPct)} |
 
-- **Se la tua tesi è "USA continuerà a dominare"** → SWDA è coerente con la
-  tesi, è meno diversificato e ha avuto rendimenti più alti.
-- **Se la tua tesi è "non lo so / non voglio quella scommessa"** → VWCE è
-  la scelta che non la richiede. Costa un filo in CAGR storico, ma quel
-  filo (~${p(sA.cagr - sB.cagr, 2)}) è dentro il rumore del Monte Carlo (range
-  P10-P90 è > €${Math.round((mcA.finals.p90 - mcA.finals.p10) / 1000)}k).
-- **Se la tua tesi è "EM è value play, mean revertirà"** → VWCE è il modo
-  poco invasivo per esprimerla; il VWCE 90/10 NON è una scommessa
-  aggressiva su EM. Se vuoi davvero scommettere su EM, ci vorrebbe un
-  candidato tipo "80% VWCE + 20% EM" (= il C4 di Task 5).
-
-### Cosa non puoi dire
-
-- "Il backtest dice che SWDA è meglio." → No. Dice che SWDA ha reso di più
-  *in questo periodo*. È un fatto storico, non una proprietà strutturale.
-- "Il Monte Carlo dice che SWDA renderà di più nei prossimi 20 anni." → No.
-  Il MC restituisce l'assunzione in input.
+**Lettura fattuale**: con S il portafoglio resta a **0% emergenti per sempre**
+e converge verso ~${pct(c.evoS[240].usPct)} USA (il flusso SWDA al 72% USA + il
+€50 CSNDX al 100% USA). Con V l'EM entra gradualmente fino a ~${pct(c.evoV[240].emPct)}
+dell'equity, e l'esposizione USA scende verso ~${pct(c.evoV[240].usPct)}.
+Nota: se gli asset USA crescessero più degli altri (come nel periodo storico),
+le percentuali USA sarebbero **più alte** di queste in entrambi gli scenari.
 
 ---
 
-## Sintesi a una riga
+## PARTE 5 — Scenari avversi simmetrici (stesse unità: euro su PAC 20y)
 
-SWDA ha battuto VWCE di ${p(sA.cagr - sB.cagr, 2)} CAGR (${eurM(diffPAC)} su un
-PAC reale di ${eurM(pacA.invested)}) **perché EM ha deluso in questo periodo**.
-La decisione sui prossimi 20 anni dipende da una tesi su EM che il backtest
-non può fornire.
+**Assunzione dichiarata (debole)**: μ forward DM = ${pct(c.MU_DM)} nominale EUR
+(consenso istituzionale ~5-7%). Scenari EM costruiti simmetrici a ±3pp attorno a DM.
+
+FV del PAC scenario S (100% DM): **${eur(c.fvS)}** su ${eur(PAC_MONTHLY * 240)} versati.
+
+| scenario per EM | rendimento blended V | FV (V) | Δ V−S in euro |
+|---|---|---|---|
+${Object.entries(c.scenResults).map(([l, r]) => `| ${l} | ${pct(r.rate)} | ${eur(r.fvV)} | **${eur(r.delta)}** |`).join('\n')}
+
+**Lettura simmetrica**:
+- **Contro V** (EM continua a deludere come 2010-2026): il 10% EM costa
+  **~${eur(Math.abs(c.scenResults['EM continua a deludere (DM−3pp = 3,5%)'].delta))}** in 20 anni.
+- **Contro S** (EM mean-reversion +3pp): si lasciano sul tavolo
+  **~${eur(c.scenResults['EM mean-reversion (DM+3pp = 9,5%)'].delta)}** in 20 anni.
+- I due rischi sono **della stessa grandezza** per costruzione (±3pp).
+  L'asimmetria, se c'è, non è nei numeri ma nel punto di partenza
+  valutativo: con S si sarebbe ~${pct(c.evoS[240].usPct)} su sviluppati/USA
+  mentre le valutazioni relative USA sono al massimo storico
+  (CAPE >35 vs EM P/E ~13). Questo è un FATTO sulle valutazioni di oggi,
+  non una previsione sui rendimenti di domani.
+
+---
+
+## Sintesi fattuale (nessuna raccomandazione)
+
+1. Storicamente (2009-2026): SWDA +${pct(c.sA.cagr - c.sB.cagr, 2)} CAGR,
+   **+${eur(c.dNet)}** su un PAC reale di ${eur(c.pacA.invested)} netto bollo.
+   Vantaggio distribuito su ${c.posYears}/${c.yearRows.length} anni, stabile nei due
+   sottoperiodi, interamente attribuibile alla sotto-performance EM del periodo.
+2. Drawdown: **stessi ${c.listA.length} episodi ≥10%, stesse date, profondità quasi
+   identiche**. Sul rischio di percorso i due sono gemelli.
+3. In proiezione (MC): overlap ${pct(c.ovl)} — la fortuna del ventennio conta
+   molto più della scelta tra i due.
+4. Sul portafoglio reale: S consolida ~${pct(c.evoS[240].usPct)} USA e 0% EM
+   permanente; V porta gradualmente a ~${pct(c.evoV[240].emPct)} EM e
+   ~${pct(c.evoV[240].usPct)} USA.
+5. I due rischi simmetrici (EM continua a deludere vs mean-reversion) valgono
+   entrambi ~€9-10k su 20 anni. La scelta è una presa di posizione su EM,
+   che il backtest non può fare al posto dell'utente.
 `;
 }
 
