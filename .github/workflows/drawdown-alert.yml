@@ -1,38 +1,74 @@
 name: Drawdown Alert
 
+# =============================================================================
+# Task F — alert email su crossing di tier (post Task D).
+# Schedule: 06:30 UTC quotidiano → close di Borsa europea del giorno prima
+# è consolidato in data/history.json dal cron update-prices delle 18:30 UTC.
+# Niente intraday (G1 anti-rumore).
+#
+# workflow_dispatch: trigger manuale. Input opzionali:
+#   - dry_run:    true → non invia, stampa il payload nei log Actions
+#   - force_tier: 0|1|2 → forza il tier corrente (smoke test e2e)
+# =============================================================================
 on:
   schedule:
-    # Ogni giorno alle 06:30 UTC (07:30 CET / 08:30 CEST)
+    # 06:30 UTC ogni giorno (07:30 CET / 08:30 CEST).
     - cron: '30 6 * * *'
 
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (non invia email, stampa payload nei log)'
+        type: boolean
+        required: false
+        default: false
+      force_tier:
+        description: 'Forza tier corrente per smoke test (lascia vuoto per usare ddATH reale)'
+        type: choice
+        required: false
+        default: ''
+        options: ['', '0', '1', '2']
 
-# FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 fa girare actions/checkout e
-# actions/setup-python sul runtime Node 24 invece del Node 20 deprecato
-# (sunset ~2 giugno 2026). Soluzione preferita al bump versione-per-versione
-# di ciascuna action: agisce uniformemente, niente regressioni da pinning.
-# Coerente con la stessa scelta in update-prices.yml (PR #18).
 env:
+  # Forza Node 24 sulle JavaScript actions (sunset Node 20 ~2 giu 2026).
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   check-drawdown:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write   # serve per committare data/alert_state.json
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          python-version: '3.12'
+          node-version: '22'
 
-      - name: Run drawdown check
+      - name: Run drawdown alert
         env:
-          SHEET_HISTORY_URL: ${{ secrets.SHEET_HISTORY_URL }}
-          GMAIL_USER: ${{ secrets.GMAIL_USER }}
-          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
-          ALERT_THRESHOLD: '-0.05'
-        run: python scripts/drawdown_alert.py
+          RESEND_API_KEY:    ${{ secrets.RESEND_API_KEY }}
+          ALERT_EMAIL_TO:    ${{ secrets.ALERT_EMAIL_TO }}
+          ALERT_EMAIL_FROM:  ${{ secrets.ALERT_EMAIL_FROM }}
+          ALERT_DRY_RUN:     ${{ github.event.inputs.dry_run == 'true' && '1' || '' }}
+          ALERT_FORCE_TIER:  ${{ github.event.inputs.force_tier }}
+        run: node scripts/drawdown_alert.js
+
+      - name: Commit & push alert state if changed
+        # data/alert_state.json viene aggiornato dal run quando il tier cambia.
+        # Commit con [skip ci] per evitare loop di workflow ricorsivi.
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/alert_state.json
+          if git diff --cached --quiet; then
+            echo "No alert state changes; nothing to commit."
+          else
+            git commit -m "alert: update alert_state @ $(date -u +%Y-%m-%dT%H:%M:%SZ) [skip ci]"
+            git push
+          fi
