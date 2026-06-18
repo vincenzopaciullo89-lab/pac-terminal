@@ -1,40 +1,40 @@
 {
-  "updated_at": "2026-06-17T20:34:32.465590+00:00",
+  "updated_at": "2026-06-18T11:34:56.297724+00:00",
   "fx_rates": {
-    "EURGBP": 0.8650299906730652
+    "EURGBP": 0.8670399785041809
   },
   "current": {
     "VWCE": {
-      "price_native": 164.61,
-      "price_eur": 164.61,
+      "price_native": 165.28,
+      "price_eur": 165.28,
       "currency": "EUR",
       "needs_fx": false,
       "source": "yfinance"
     },
     "CSNDX": {
-      "price_native": 1491.29,
-      "price_eur": 1491.29,
+      "price_native": 1508.0,
+      "price_eur": 1508.0,
       "currency": "EUR",
       "needs_fx": false,
       "source": "yfinance"
     },
     "CSPX": {
-      "price_native": 697.89,
-      "price_eur": 697.89,
+      "price_native": 701.97,
+      "price_eur": 701.97,
       "currency": "EUR",
       "needs_fx": false,
       "source": "yfinance"
     },
     "SWDA": {
-      "price_native": 124.17,
-      "price_eur": 124.17,
+      "price_native": 124.65,
+      "price_eur": 124.65,
       "currency": "EUR",
       "needs_fx": false,
       "source": "yfinance"
     },
     "VETA": {
-      "price_native": 20.921,
-      "price_eur": 24.1853,
+      "price_native": 20.9395,
+      "price_eur": 24.1505,
       "currency": "GBP",
       "needs_fx": true,
       "source": "yfinance"
