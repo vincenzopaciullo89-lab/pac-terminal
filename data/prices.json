@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-10-02T22:25:10.370048+00:00",
+  "updated_at": "2026-10-03T12:39:29.801632+00:00",
   "fx_rates": {
     "EURGBP": 0.8497200012207031
   },
@@ -33,8 +33,8 @@
       "source": "yfinance"
     },
     "VETA": {
-      "price_native": 19.772,
-      "price_eur": 23.2688,
+      "price_native": 19.7035,
+      "price_eur": 23.1882,
       "currency": "GBP",
       "needs_fx": true,
       "source": "yfinance"
